@@ -119,6 +119,11 @@ def review(request: Request, rfx_id: str, vendor_id: str, line_no: int, action: 
     state["reviews"] = [r for r in state.get("reviews", []) if not (r["vendor_id"] == vendor_id and r["line_no"] == line_no)]
     if action != "clear":
         val = None
+        if action == "accept":
+            cmp = engine.build_comparison({**state, "reviews": []})
+            cell = next(ln for ln in cmp["lines"] if ln["line_no"] == line_no)["cells"].get(vendor_id, {})
+            if cell.get("unit_inr") is None:
+                return error_fragment("This cell has no per-piece price to accept. Use 'Override' with the confirmed INR value, or leave it excluded.", 400)
         if action == "override":
             try:
                 val = float(value_inr.replace(",", ""))
