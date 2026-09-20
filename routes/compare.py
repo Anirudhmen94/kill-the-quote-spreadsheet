@@ -45,7 +45,8 @@ def _context_lines(text: str, snippet: str, radius: int = 3) -> list[dict]:
 
 
 @router.get("/rfx/{rfx_id}/compare", response_class=HTMLResponse)
-def compare_page(request: Request, rfx_id: str, status: str = "open"):
+def compare_page(request: Request, rfx_id: str):
+    """Clean Compare — verified prices for Pass vendors only. Messy work lives on Anomalies."""
     state = load_or_404(rfx_id)
     cmp = awardability.enrich_state_comparison(state) if any(v.get("extraction") for v in state["vendors"]) else engine.build_comparison(state)
     counts = snapshots.processing_counts(state)
@@ -65,9 +66,14 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
     from core import charts, compare_ask
 
     ready = any(v.get("extraction") for v in state["vendors"])
-    filter_status = status if status in ("open", "pending", "resolved", "all") else "open"
-    anomaly_items = exc_mod.list_exceptions(state, None if filter_status == "all" else filter_status)
-    exc_counts = exc_mod.counts(state)
+    gates = cmp.get("gates") or {}
+    pass_ids = set(gates.get("pass_ids") or [])
+    gates_present = bool(pass_ids) or bool((gates.get("summary") or {}).get("total"))
+    if gates_present:
+        matrix_vendors = [v for v in cmp["vendors"] if v.get("gate") == "Pass" or v["vendor_id"] in pass_ids]
+    else:
+        matrix_vendors = list(cmp["vendors"])
+    open_anomaly_count = exc_mod.counts(state).get("open", 0)
     chart_bundle = charts.build_chart_bundle(state) if ready else {"available": False}
     if chart_bundle.get("available"):
         storage.save_state(rfx_id, state)  # persist award_scenario snapshot from live calc
@@ -79,14 +85,14 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
         cmp=cmp,
         counts=counts,
         exclusion_summary=cmp.get("exclusion_summary"),
-        gates=cmp.get("gates"),
+        gates=gates,
         active="compare",
         compare_premades=compare_ask.COMPARE_PREMADES,
         ready=ready,
-        anomaly_items=anomaly_items,
-        exc_counts=exc_counts,
-        filter_status=filter_status,
-        has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
+        matrix_vendors=matrix_vendors,
+        gates_present=gates_present,
+        open_anomaly_count=open_anomaly_count,
+        verified_statuses=sorted(engine.USABLE),
         charts=chart_bundle,
         audit_strip=audit_strip,
     )

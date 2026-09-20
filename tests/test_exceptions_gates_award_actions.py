@@ -31,17 +31,17 @@ def _seed():
     return st
 
 
-def test_nav_has_no_exceptions_compare_then_award():
+def test_nav_has_anomalies_between_compare_and_award():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/compare")
     assert r.status_code == 200
     assert not re.search(r'href="/rfx/[^"]+/exceptions"', r.text)
-    # Primary step labels: Compare then Award (Exceptions absorbed)
-    pos_c = r.text.find("Compare")
-    pos_e = r.text.find(">Exceptions<")
-    pos_a = r.text.find(">Award<") if ">Award<" in r.text else r.text.find("Award")
-    assert pos_e == -1
-    assert 0 <= pos_c < pos_a
+    assert re.search(r'href="/rfx/[^"]+/anomalies"', r.text)
+    def _nav_pos(label: str) -> int:
+        m = re.search(rf">\s*{re.escape(label)}\s*<", r.text)
+        return m.start() if m else -1
+    pos_c, pos_an, pos_a = _nav_pos("Compare"), _nav_pos("Anomalies"), _nav_pos("Award")
+    assert 0 <= pos_c < pos_an < pos_a
     # Ask is not a primary nav step (drawer may still mention it)
     assert not re.search(r'href="/rfx/[^"]+/ask"', r.text)
 
@@ -153,7 +153,7 @@ def test_draft_endpoint_custom_gate_shows_on_rfx_page():
 
 def test_exceptions_override_approval_reject_flow():
     st = _seed()
-    r = client.get(f"/rfx/{st['id']}/compare")
+    r = client.get(f"/rfx/{st['id']}/anomalies")
     assert r.status_code == 200
     assert 'id="anomalies"' in r.text
     assert exc.counts(st)["open"] >= 1

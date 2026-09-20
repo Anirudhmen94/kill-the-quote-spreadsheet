@@ -135,7 +135,7 @@ def test_audit_trail_csv_and_trust_strip():
     strip = charts.audit_trust_strip(st)
     assert strip["buyer_overrides"] == 1
     assert strip["notices_sent"] == 1
-    assert "/compare#anomalies" in strip["links"]["review"]
+    assert "/anomalies" in strip["links"]["review"]
     assert "#outbox" in strip["links"]["outbox"]
     assert "/ai-log" in strip["links"]["ai_log"]
 

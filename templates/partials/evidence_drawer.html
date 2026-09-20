@@ -70,46 +70,15 @@
   <div class="text-xs text-slate-600">Model's candidate lines for this row: {{ cell.candidates|join(', ') }}</div>
   {% endif %}
 
-  {% if exception_item and (exception_item.status == 'open' or exception_item.status == 'rejected') %}
-  <section class="rounded-lg border border-slate-200 p-3 space-y-2 text-xs">
-    <h3 class="font-medium text-sm">Resolve anomaly</h3>
-    <p class="text-slate-600">Override applies into award totals. Deny closes without applying a value. Send for approval stubs a manager request.</p>
-    <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ exception_item.key }}/override" class="space-y-1">
-      <input name="note" required placeholder="Override note (required)"
-             class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
-      <button class="w-full rounded bg-slate-900 text-white px-2 py-1.5 hover:bg-slate-800">Override</button>
-    </form>
-    <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ exception_item.key }}/request-approval" class="space-y-1 border-t border-slate-100 pt-2">
-      <input name="note" required placeholder="Why manager approval is needed"
-             class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
-      <div class="flex gap-1">
-        <input name="manager_name" placeholder="Manager name"
-               class="w-1/2 rounded border border-slate-300 px-2 py-1 text-xs">
-        <input name="manager_email" type="email" placeholder="email@optional"
-               class="w-1/2 rounded border border-slate-300 px-2 py-1 text-xs">
-      </div>
-      <button class="w-full rounded border border-slate-300 bg-white px-2 py-1.5 hover:bg-slate-50">Send for approval</button>
-    </form>
-    <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ exception_item.key }}/deny" class="space-y-1 border-t border-slate-100 pt-2">
-      <input name="note" required placeholder="Deny reason (required)"
-             class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
-      <button class="w-full rounded border border-rose-300 text-rose-800 bg-white px-2 py-1.5 hover:bg-rose-50">Deny</button>
-    </form>
-    <a href="/rfx/{{ state.id }}/compare#anomalies" class="inline-block text-slate-500 underline hover:text-slate-800">All anomalies</a>
-  </section>
-  {% elif exception_item and exception_item.status == 'pending_approval' %}
-  <section class="rounded-lg border border-sky-200 bg-sky-50 p-3 space-y-2 text-xs">
-    <h3 class="font-medium text-sm text-sky-950">Pending manager approval</h3>
-    <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ exception_item.key }}/approve" class="space-y-1">
-      <input name="note" placeholder="Approval note" class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
-      <button class="w-full rounded bg-emerald-700 text-white px-2 py-1.5 hover:bg-emerald-800">Approve</button>
-    </form>
-    <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ exception_item.key }}/reject" class="space-y-1">
-      <input name="note" placeholder="Rejection note" class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
-      <button class="w-full rounded border border-rose-300 text-rose-700 bg-white px-2 py-1.5 hover:bg-rose-50">Reject</button>
-    </form>
+  {% if exception_item and exception_item.status in ('open', 'rejected', 'pending_approval') %}
+  <section class="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2 text-xs">
+    <h3 class="font-medium text-sm text-amber-950">Flagged on Anomalies</h3>
+    <p class="text-amber-900">Override, deny, and approval actions live on the Anomalies tab — Compare stays verified-only.</p>
+    {% if exception_item.reason %}<p class="text-amber-900"><strong>Why:</strong> {{ exception_item.reason }}</p>{% endif %}
+    <a href="/rfx/{{ state.id }}/anomalies" class="inline-block rounded bg-slate-900 text-white px-3 py-1.5 hover:bg-slate-800">Open Anomalies</a>
   </section>
   {% elif cell.review %}
+
   <div class="text-xs rounded bg-violet-50 text-violet-900 p-2">
     Reviewed · <strong>{{ cell.review.action }}</strong>{% if cell.review.value_inr is not none %} → ₹{{ cell.review.value_inr }}/pc{% endif %}
     {% if cell.review.note %}<div class="mt-0.5 opacity-80">{{ cell.review.note }}</div>{% endif %}

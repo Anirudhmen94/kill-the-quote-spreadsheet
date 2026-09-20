@@ -215,7 +215,7 @@ def audit_trust_strip(state: dict) -> dict[str, Any]:
         "notices_sent": notices_sent,
         "buyer_overrides": overrides,
         "links": {
-            "review": f"/rfx/{rid}/compare#anomalies",
+            "review": f"/rfx/{rid}/anomalies",
             "outbox": f"/rfx/{rid}/email#outbox",
             "ai_log": f"/rfx/{rid}/ai-log",
             "workbook": f"/rfx/{rid}/export.xlsx",

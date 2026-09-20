@@ -3,23 +3,24 @@
 {% block title %}Compare · {{ state.rfx.title }}{% endblock %}
 {% block content %}
 {% set extracted = cmp.vendors|selectattr('status','equalto','extracted')|list %}
+{% set matrix_vendors = matrix_vendors if matrix_vendors is defined else cmp.vendors %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="text-2xl font-semibold tracking-tight">Side-by-side comparison</h1>
-    <p class="mt-1 text-sm text-slate-600">Five-vendor comparison · prices normalised to <strong>INR per piece</strong>. Click any flagged cell for evidence and resolution. FX {{ cmp.fx.rates_to_inr.USD }} INR/USD as of {{ cmp.fx.as_of }}.</p>
+    <p class="mt-1 text-sm text-slate-600">Verified Pass comparison only — <strong>ok / converted / reviewed</strong> cells for vendors who cleared quality knockouts. Flagged prices, Fail/Partial gates, and coverage gaps live on <a href="/rfx/{{ state.id }}/anomalies" class="underline font-medium">Anomalies</a>. Prices normalised to <strong>INR per piece</strong>. FX {{ cmp.fx.rates_to_inr.USD }} INR/USD as of {{ cmp.fx.as_of }}.</p>
   </div>
   <div class="flex items-center gap-2">
-    {% if extracted and exc_counts and exc_counts.open %}
-    <a href="#anomalies" id="anomalies-chip"
-       class="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 text-amber-950 px-3 py-1.5 text-xs font-medium hover:bg-amber-100"
-       title="Open the anomalies panel — flagged cells, gates, coverage gaps.">
-      <span class="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-600 text-white px-1">{{ exc_counts.open }}</span>
-      open anomal{{ 'ies' if exc_counts.open != 1 else 'y' }}
+    {% if extracted and open_anomaly_count %}
+    <a href="/rfx/{{ state.id }}/anomalies" id="anomalies-link"
+       class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white text-slate-700 px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
+       title="Open the Anomalies tab for flagged cells, gates, and coverage gaps.">
+      <span class="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-600 text-white px-1">{{ open_anomaly_count }}</span>
+      view anomal{{ 'ies' if open_anomaly_count != 1 else 'y' }}
     </a>
     {% elif extracted %}
-    <a href="#anomalies" id="anomalies-chip"
+    <a href="/rfx/{{ state.id }}/anomalies" id="anomalies-link"
        class="inline-flex items-center gap-1.5 rounded-full border border-slate-300 bg-white text-slate-600 px-3 py-1.5 text-xs hover:bg-slate-50"
-       title="Open the anomalies panel.">Anomalies</a>
+       title="Open the Anomalies tab.">Anomalies</a>
     {% endif %}
     <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50"
       title="Download Excel: comparison grid, flags, evidence and review log for this event.">Export workbook</a>
@@ -48,20 +49,19 @@
 {% endif %}
 
 <div class="mt-4 flex flex-wrap items-center gap-2 text-xs">
-  <span class="inline-flex items-center gap-1 font-medium text-slate-600">Cell legend {{ tip("Colour shows how trustworthy each price is. Amber and red stay out of totals until you resolve them in the anomalies panel or evidence drawer.", aria="Legend help", width="w-60") }}</span>
+  <span class="inline-flex items-center gap-1 font-medium text-slate-600">Cell legend {{ tip("Only verified cells (ok, converted, reviewed) appear in this matrix. Everything else is blank here and listed on Anomalies.", aria="Legend help", width="w-60") }}</span>
   {% for k, label, cls, tiptext in [
     ('ok','ok','bg-emerald-100 text-emerald-800','Read directly from the file; evidence snippet verified.'),
     ('converted','converted','bg-sky-100 text-sky-800','Normalised (FX, per-100, per-kg). Conversion shown under the price.'),
     ('reviewed','reviewed','bg-violet-100 text-violet-800','You accepted or overrode this cell — counts in totals.'),
-    ('needs_review','needs review','bg-amber-100 text-amber-800','Ambiguous or unverified. Excluded from every total until reviewed.'),
-    ('unresolved','unresolved','bg-rose-100 text-rose-800','Refers to data we do not have. Excluded from totals.'),
-    ('missing','missing','bg-slate-100 text-slate-600','Vendor did not quote this line.')
+    
   ] %}
   <span class="inline-flex items-center gap-1 rounded px-2 py-0.5 {{ cls }}" title="{{ tiptext }}">{{ label }}</span>
   {% endfor %}
+  <span class="text-slate-500">· blank = not verified (see Anomalies)</span>
 </div>
 
-{% if exclusion_summary %}
+{% if false and exclusion_summary %}
 <div class="mt-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2" title="These cells are visible but never enter money totals or a freeze unless you confirm or override.">
   <strong>Excluded from every total</strong> · {{ exclusion_summary.headline }}
   <div class="text-xs mt-1 opacity-90">Assumed cells never enter a frozen award without confirm. Needs-review, unresolved, and conversion-failed cells stay visible and out of money.
@@ -69,9 +69,18 @@
 </div>
 {% endif %}
 
-{% if gates %}
+{% if gates_present %}
 <div class="mt-3 flex flex-wrap gap-2 text-xs items-center">
-  <span class="inline-flex items-center gap-1 font-medium text-slate-600">Quality gates {{ tip("Pass / Partial / Fail from the questionnaire. Fail on a knockout blocks that vendor from a quality-gated award.", aria="Gate badges help", width="w-60") }}</span>
+  <span class="inline-flex items-center gap-1 font-medium text-slate-600">Pass vendors {{ tip("Only vendors who cleared quality knockouts appear as columns. Fail / Partial are on Anomalies.", aria="Gate badges help", width="w-60") }}</span>
+  {% for g in gates.vendors if g.grade == 'Pass' %}
+  <span class="rounded-full px-2 py-0.5 border bg-emerald-50 text-emerald-800 border-emerald-200"
+    title="{{ g.reason }}">{{ g.name.split()[0] }} · Pass</span>
+  {% endfor %}
+  <a href="/rfx/{{ state.id }}/anomalies" class="underline text-slate-600">Fail / Partial &amp; flags → Anomalies</a>
+</div>
+{% elif gates %}
+<div class="mt-3 flex flex-wrap gap-2 text-xs items-center">
+  <span class="inline-flex items-center gap-1 font-medium text-slate-600">Quality gates {{ tip("Pass / Partial / Fail from the questionnaire.", aria="Gate badges help", width="w-60") }}</span>
   {% for g in gates.vendors %}
   <span class="rounded-full px-2 py-0.5 border
     {% if g.grade == 'Pass' %}bg-emerald-50 text-emerald-800 border-emerald-200
@@ -83,15 +92,23 @@
 {% endif %}
 
 
+
+{% if gates_present and not matrix_vendors %}
+<div class="mt-6 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-8 text-center text-sm text-amber-950">
+  No Pass vendors to show yet.
+  <a href="/rfx/{{ state.id }}/anomalies" class="underline font-medium">Resolve gate Fail / Partial on Anomalies</a>
+  so cleared vendors appear here.
+</div>
+{% else %}
 {% call filter_bar_shell(
   "compare-matrix-filters",
-  tip_text="Display-only matrix filters. Comparison totals and award maths are unchanged.",
+  tip_text="Display-only filters over verified Pass columns. Comparison totals and award maths are unchanged.",
   search_fields="description,sku,vendor-names",
   items_sel="#compare-matrix tbody tr[data-filter-row]",
   empty_target="#compare-matrix-empty",
   url_sync=true,
   url_prefix="c_",
-  url_keys="search=cq,cell-status=ccell,gate=cgate",
+  url_keys="search=cq,cell-status=ccell",
   columns_sel="#compare-matrix [data-col-vendor]",
   col_cells_sel="#compare-matrix [data-cell-vendor]",
   multi_attrs='data-multi-attr-vendors="vendor-id"'
@@ -100,7 +117,7 @@
   <details class="relative text-xs">
     <summary class="cursor-pointer rounded border border-slate-300 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50" title="Show or hide vendor columns">Vendors</summary>
     <div class="absolute z-20 mt-1 max-h-48 w-56 overflow-auto rounded border border-slate-200 bg-white p-2 shadow-lg space-y-1">
-      {% for v in cmp.vendors %}
+      {% for v in matrix_vendors %}
       <label class="flex items-center gap-2 text-slate-700">
         <input type="checkbox" data-filter-multi="vendors" value="{{ v.vendor_id }}" checked>
         <span class="truncate">{{ v.name }}</span>
@@ -109,21 +126,11 @@
     </div>
   </details>
   {{ filter_select("cell-status", "Cell", [
-      ("all", "All cells"),
+      ("all", "All verified"),
       ("ok", "ok"),
       ("converted", "converted"),
       ("reviewed", "reviewed"),
-      ("needs_review", "needs review"),
-      ("unresolved", "unresolved"),
-      ("missing", "missing"),
-      ("flagged", "flagged only"),
-    ], title="Show rows with at least one matching cell status") }}
-  {{ filter_select("gate", "Gate", [
-      ("all", "All gates"),
-      ("Pass", "Pass"),
-      ("Partial", "Partial"),
-      ("Fail", "Fail"),
-    ], title="Hide vendor columns by quality-gate grade") }}
+    ], title="Show rows with at least one matching verified cell status") }}
 {% endcall %}
 <div id="compare-matrix-empty" class="hidden mt-2 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center text-sm text-slate-500" hidden>No matches — clear filters</div>
 
@@ -135,13 +142,12 @@
           <th class="px-2 py-2 text-left sticky left-0 bg-slate-50 z-10 w-8">#</th>
           <th class="px-2 py-2 text-left sticky left-8 bg-slate-50 z-10 min-w-[260px]">Line item</th>
           <th class="px-2 py-2 text-right">Qty/yr</th>
-          {% for v in cmp.vendors %}
+          {% for v in matrix_vendors %}
           <th class="px-2 py-2 text-right min-w-[128px]" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-vendor-name="{{ v.name }}" data-gate="{{ v.gate or '' }}">
             <button hx-get="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/questionnaire" hx-target="#drawer-root" class="text-left w-full hover:underline">
               <div class="font-semibold text-slate-800 normal-case">{{ v.name }}</div>
               <div class="mt-0.5 flex flex-wrap gap-1 justify-end font-normal">
                 <span class="rounded px-1 {% if v.questionnaire.overall == 'cleared' %}bg-emerald-100 text-emerald-800{% elif v.questionnaire.overall == 'failed' %}bg-rose-100 text-rose-800{% elif v.questionnaire.overall == 'not_extracted' %}bg-slate-100 text-slate-500{% else %}bg-amber-100 text-amber-800{% endif %}">Q: {{ v.questionnaire.overall.replace('_',' ') }}</span>
-                {% if v.commercial.freight_extra %}<span class="rounded px-1 bg-orange-100 text-orange-800">freight extra</span>{% endif %}
                 {% if v.commercial.discount_pct %}<span class="rounded px-1 bg-sky-100 text-sky-800">{{ v.commercial.discount_pct|round(1) }}% cond. disc.</span>{% endif %}
               </div>
               <div class="mt-0.5 text-[11px] text-slate-500 font-normal">{{ v.usable }}/{{ cmp.line_count }} usable{% if v.gate %} · gate {{ v.gate }}{% endif %}{% if v.avg_confidence %} · conf {{ (v.avg_confidence*100)|round|int }}%{% endif %}</div>
@@ -155,43 +161,32 @@
         <tr class="hover:bg-slate-50/60" data-filter-row data-filter-item
             data-description="{{ ln.description }}"
             data-sku="{{ ln.sku }}"
-            data-vendor-names="{% for v in cmp.vendors %}{{ v.name }}{% if not loop.last %} {% endif %}{% endfor %}">
+            data-vendor-names="{% for v in matrix_vendors %}{{ v.name }}{% if not loop.last %} {% endif %}{% endfor %}">
           <td class="px-2 py-1.5 text-slate-500 sticky left-0 bg-white">{{ ln.line_no }}</td>
           <td class="px-2 py-1.5 sticky left-8 bg-white">
             <div class="truncate max-w-[300px]" title="{{ ln.description }}">{{ ln.description }}</div>
             <div class="text-[11px] text-slate-500">{{ ln.sku }} · {{ ln.board }} {{ ln.flute }} · {{ ln.dimensions }} · {{ ln.gsm }} gsm</div>
           </td>
           <td class="px-2 py-1.5 text-right tabular-nums text-slate-600">{{ ln.annual_qty|num }}</td>
-          {% for v in cmp.vendors %}
+          {% for v in matrix_vendors %}
           {% set c = ln.cells[v.vendor_id] %}
-          {% set cell_st = 'missing' if c.status in ['missing', 'not_quoted', 'not_extracted'] or c.status is none else c.status %}
-          <td class="px-1 py-1 text-right" data-cell-vendor data-vendor-id="{{ v.vendor_id }}" data-cell-status="{{ cell_st }}" data-gate="{{ v.gate or '' }}">
+          {% set verified = c.status in ['ok', 'converted', 'reviewed'] and c.unit_inr is not none %}
+          <td class="px-1 py-1 text-right" data-cell-vendor data-vendor-id="{{ v.vendor_id }}" data-cell-status="{{ c.status if verified else 'blank' }}" data-gate="{{ v.gate or '' }}">
+            {% set verified = c.status in ['ok', 'converted', 'reviewed'] and c.unit_inr is not none %}
             <button hx-get="/rfx/{{ state.id }}/evidence/{{ v.vendor_id }}/{{ ln.line_no }}" hx-target="#drawer-root"
-              title="Open evidence for this cell — verbatim snippet from the vendor file."
+              title="{% if verified %}Open evidence for this verified cell.{% else %}Not verified on Compare — see Anomalies to resolve.{% endif %}"
               class="w-full rounded px-1.5 py-1 text-right tabular-nums border transition
-                {% if c.status == 'ok' %}bg-emerald-50 border-emerald-100 hover:border-emerald-400
-                {% elif c.status == 'converted' %}bg-sky-50 border-sky-100 hover:border-sky-400
-                {% elif c.status == 'reviewed' %}bg-violet-50 border-violet-100 hover:border-violet-400
-                {% elif c.status == 'needs_review' %}bg-amber-50 border-amber-200 hover:border-amber-400
-                {% elif c.status == 'unresolved' %}bg-rose-50 border-rose-200 hover:border-rose-400
-                {% elif c.status == 'not_extracted' %}bg-white border-transparent text-slate-300
-                {% else %}bg-slate-50 border-slate-100 text-slate-400 hover:border-slate-300{% endif %}
-                {% if ln.best_vendor == v.vendor_id %}ring-1 ring-inset ring-emerald-500 font-semibold{% endif %}">
-              {% if c.unit_inr is not none %}
+                {% if verified and c.status == 'ok' %}bg-emerald-50 border-emerald-100 hover:border-emerald-400
+                {% elif verified and c.status == 'converted' %}bg-sky-50 border-sky-100 hover:border-sky-400
+                {% elif verified and c.status == 'reviewed' %}bg-violet-50 border-violet-100 hover:border-violet-400
+                {% else %}bg-white border-transparent text-slate-300 hover:border-slate-200{% endif %}
+                {% if verified and ln.best_vendor == v.vendor_id %}ring-1 ring-inset ring-emerald-500 font-semibold{% endif %}">
+              {% if verified %}
                 ₹{{ '%.2f'|format(c.unit_inr) }}
-              {% elif c.status == 'needs_review' and c.unit_inr_candidate is defined and c.unit_inr_candidate is not none %}
-                <span class="text-amber-700">₹{{ '%.2f'|format(c.unit_inr_candidate) }}?</span>
-              {% elif c.status == 'needs_review' and c.raw_price is not none %}
-                <span class="text-amber-700">{{ c.raw_price }} {{ c.currency or '' }} {{ c.basis.replace('per_','/') if c.basis else '' }}</span>
-              {% elif c.status == 'unresolved' %}<span class="text-rose-700">unresolved</span>
-              {% elif c.status == 'not_extracted' %}—
-              {% else %}<span>not quoted</span>{% endif %}
-              {% if c.flags %}<div class="text-[10px] font-normal text-slate-500 leading-tight">{{ c.flags|reject('equalto','currency_from_terms')|join(', ')|replace('_',' ') }}</div>{% endif %}
-              {% if c.awardability and c.awardability != 'awardable' %}<div class="text-[10px] font-semibold leading-tight
-                {% if c.awardability == 'assumed' or c.awardability == 'needs_review' %}text-amber-700
-                {% elif c.awardability == 'conversion_failed' or c.awardability == 'unresolved' %}text-rose-700
-                {% else %}text-slate-500{% endif %}">{{ c.awardability_label }}</div>{% endif %}
-              {% if c.conversion and c.status == 'converted' %}<div class="text-[10px] font-normal text-sky-700 leading-tight truncate max-w-[120px]" title="{{ c.conversion }}">{{ c.conversion }}</div>{% endif %}
+                {% if c.conversion and c.status == 'converted' %}<div class="text-[10px] font-normal text-sky-700 leading-tight truncate max-w-[120px]" title="{{ c.conversion }}">{{ c.conversion }}</div>{% endif %}
+              {% else %}
+                <span class="text-slate-300">—</span>
+              {% endif %}
             </button>
           </td>
           {% endfor %}
@@ -201,27 +196,27 @@
       <tfoot class="bg-slate-50 text-xs">
         <tr>
           <td colspan="3" class="px-2 py-2 text-slate-600 sticky left-0 bg-slate-50">Usable lines / extended annual value on those lines only (not like-for-like)</td>
-          {% for v in cmp.vendors %}
+          {% for v in matrix_vendors %}
           <td class="px-2 py-2 text-right tabular-nums" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-gate="{{ v.gate or '' }}"><div class="font-medium">{{ v.usable }} lines</div><div class="text-slate-600">{{ v.extended_total_usable|inr }}</div></td>
           {% endfor %}
         </tr>
         <tr>
-          <td colspan="3" class="px-2 py-2 text-slate-600 sticky left-0 bg-slate-50">Cells: ok / converted / review / unresolved / missing</td>
-          {% for v in cmp.vendors %}
-          <td class="px-2 py-2 text-right tabular-nums text-slate-600" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-gate="{{ v.gate or '' }}">{{ v.counts.ok }} / {{ v.counts.converted }} / {{ v.counts.needs_review }} / {{ v.counts.unresolved }} / {{ v.counts.missing }}</td>
+          <td colspan="3" class="px-2 py-2 text-slate-600 sticky left-0 bg-slate-50">Verified cells: ok / converted / reviewed</td>
+          {% for v in matrix_vendors %}
+          <td class="px-2 py-2 text-right tabular-nums text-slate-600" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-gate="{{ v.gate or '' }}">{{ v.counts.ok }} / {{ v.counts.converted }} / {{ v.counts.reviewed }}</td>
           {% endfor %}
         </tr>
       </tfoot>
     </table>
   </div>
 </div>
-<p class="mt-3 text-xs text-slate-500">Green ring marks the cheapest usable quote on each line. Amber and red cells are excluded from every total until you resolve them. Footer totals are each vendor's own coverage and are not comparable across vendors; use the analyst for like-for-like totals.</p>
+<p class="mt-3 text-xs text-slate-500">Green ring marks the cheapest verified quote on each line among Pass vendors. Unverified cells show as em-dash — resolve them on <a href="/rfx/{{ state.id }}/anomalies" class="underline">Anomalies</a>. Footer totals are each vendor's own coverage and are not comparable across vendors; use the analyst for like-for-like totals.</p>
+
+{% endif %}
 
 {% with charts_heading='Quality-gated allocation' %}
 {% include "partials/charts_panel.html" %}
 {% endwith %}
-
-{% include "partials/anomalies_panel.html" %}
 
 {% include "partials/audit_trust_strip.html" %}
 {% endif %}
@@ -262,19 +257,17 @@
   window.openAnalyst = openAnalyst;
   window.closeAnalyst = closeAnalyst;
 
-  function focusAnomalies() {
-    const el = document.getElementById('anomalies');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (location.hash === '#anomalies') {
+    location.replace(location.pathname.replace(/\/compare\/?$/, '/anomalies') + location.search);
   }
   if (location.hash === '#analyst') openAnalyst();
-  if (location.hash === '#anomalies') {
-    // Delay so layout is ready
-    requestAnimationFrame(() => setTimeout(focusAnomalies, 50));
-  }
   window.addEventListener('hashchange', () => {
+    if (location.hash === '#anomalies') {
+      location.replace(location.pathname.replace(/\/compare\/?$/, '/anomalies') + location.search);
+      return;
+    }
     if (location.hash === '#analyst') openAnalyst();
     else if (!document.getElementById('analyst-drawer').classList.contains('hidden')) closeAnalyst();
-    if (location.hash === '#anomalies') focusAnomalies();
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !document.getElementById('analyst-drawer').classList.contains('hidden')) closeAnalyst();

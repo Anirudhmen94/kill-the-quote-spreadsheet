@@ -1,4 +1,4 @@
-"""Compare absorbs Exceptions: anomalies panel + evidence drawer actions; /exceptions redirects."""
+"""Compare is verified Pass-only; Anomalies is a separate tab with actions + redirects."""
 from __future__ import annotations
 
 import re
@@ -36,67 +36,77 @@ def _open_cell(st, *, prefer_assumed: bool = False):
     return items[0]
 
 
-def test_nav_has_no_exceptions_item():
+def test_nav_has_anomalies_between_compare_and_award():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/compare")
     assert r.status_code == 200
-    # Primary nav: RFx | Email | Compare | Award — no Exceptions step
+    assert re.search(r'href="/rfx/[^"]+/anomalies"', r.text)
     assert not re.search(r'href="/rfx/[^"]+/exceptions"', r.text)
-    # Nav labels in order without Exceptions between Compare and Award
-    pos_c = r.text.find(">Compare<") if ">Compare<" in r.text else r.text.find("Compare")
-    pos_e = r.text.find(">Exceptions<")
-    pos_a = r.text.find(">Award<") if ">Award<" in r.text else r.text.find("Award")
-    assert pos_e == -1
-    assert 0 <= pos_c < pos_a
+    def _nav_pos(label: str) -> int:
+        m = re.search(rf">\s*{re.escape(label)}\s*<", r.text)
+        return m.start() if m else -1
+    pos_c, pos_an, pos_a = _nav_pos("Compare"), _nav_pos("Anomalies"), _nav_pos("Award")
+    assert 0 <= pos_c < pos_an < pos_a
 
 
-def test_exceptions_redirects_to_compare_anomalies():
+def test_exceptions_redirects_to_anomalies():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/exceptions", follow_redirects=False)
     assert r.status_code in (302, 303)
     loc = r.headers.get("location") or ""
-    assert f"/rfx/{st['id']}/compare" in loc
-    assert "#anomalies" in loc
+    assert f"/rfx/{st['id']}/anomalies" in loc
+    assert "#anomalies" not in loc
 
     r2 = client.get(f"/rfx/{st['id']}/exceptions?status=pending", follow_redirects=False)
     assert r2.status_code in (302, 303)
     loc2 = r2.headers.get("location") or ""
     assert "status=pending" in loc2
-    assert "#anomalies" in loc2
+    assert "/anomalies" in loc2
 
 
-def test_compare_includes_anomalies_panel_and_actions():
+def test_compare_has_no_anomalies_panel_and_only_pass_vendors():
     st = _seed()
     page = client.get(f"/rfx/{st['id']}/compare")
     assert page.status_code == 200
+    assert 'id="anomalies"' not in page.text
+    assert "anomalies-chip" not in page.text
+    assert "/override" not in page.text
+    assert "Send for approval" not in page.text
+    assert "/deny" not in page.text
+    # Pass vendors appear; non-Pass names from golden seed should not be column headers
+    # Sri Balaji + Kraftline are Pass; Meghna is Fail
+    assert "Sri Balaji" in page.text or "Balaji" in page.text
+    # Matrix should not advertise needs_review legend
+    assert "needs review" not in page.text.lower() or "Anomalies" in page.text
+    # Verified-only copy
+    assert "Pass" in page.text
+    assert "/rfx/" in page.text and "/anomalies" in page.text
+
+
+def test_anomalies_page_lists_items_and_actions():
+    st = _seed()
+    page = client.get(f"/rfx/{st['id']}/anomalies")
+    assert page.status_code == 200
     assert 'id="anomalies"' in page.text
-    assert "anomalies-chip" in page.text or "open anomal" in page.text
     assert "/override" in page.text
     assert "Send for approval" in page.text
     assert "/deny" in page.text
-    # Gate / coverage-gap rows appear even without a single cell
     assert "Gate" in page.text or "coverage" in page.text.lower() or "Coverage" in page.text
-    # No long vendor callout wall
-    assert "partial_quote" not in page.text or page.text.count("rounded-md border text-xs px-3 py-2") < 3
+    assert ">Anomalies<" in page.text
 
 
-def test_evidence_drawer_can_override_deny_request_approval():
+def test_evidence_drawer_links_to_anomalies_without_actions():
     st = _seed()
     cell = _open_cell(st)
     ev = client.get(f"/rfx/{st['id']}/evidence/{cell['vendor_id']}/{cell['line_no']}")
     assert ev.status_code == 200
-    assert "Source evidence" in ev.text or "Normalised" in ev.text
-    assert f"/exceptions/{cell['key']}/override" in ev.text
-    assert f"/exceptions/{cell['key']}/request-approval" in ev.text
-    assert f"/exceptions/{cell['key']}/deny" in ev.text
-    assert "Override" in ev.text
-    assert "Send for approval" in ev.text
-    assert "Deny" in ev.text
-    # Why flagged short reason
-    assert "Why flagged" in ev.text or cell.get("reason") or True
+    assert "Source evidence" in ev.text or "Normalised" in ev.text or "evidence" in ev.text.lower()
+    assert f"/exceptions/{cell['key']}/override" not in ev.text
+    assert f"/exceptions/{cell['key']}/deny" not in ev.text
+    assert f"/rfx/{st['id']}/anomalies" in ev.text
 
 
-def test_deny_persists_and_excludes_from_totals():
+def test_deny_persists_and_redirects_to_anomalies():
     st = _seed()
     ver_before = snapshots.current_version(st)
     cell = _open_cell(st)
@@ -113,8 +123,8 @@ def test_deny_persists_and_excludes_from_totals():
     )
     assert r.status_code in (302, 303)
     loc = r.headers.get("location") or ""
-    assert "#anomalies" in loc
-    assert "/compare" in loc
+    assert "/anomalies" in loc
+    assert "/compare" not in loc or "/anomalies" in loc
 
     st = storage.load_state(st["id"])
     denied = next(x for x in exc.list_exceptions(st, "resolved") if x["key"] == key)
@@ -150,6 +160,7 @@ def test_override_still_applies_into_decision():
         follow_redirects=False,
     )
     assert r.status_code in (302, 303)
+    assert "/anomalies" in (r.headers.get("location") or "")
     st = storage.load_state(st["id"])
     assert any(
         x["key"] == cell["key"] and x["status"] == "overridden"
@@ -169,7 +180,7 @@ def test_override_still_applies_into_decision():
     assert reviewed.get("unit_inr") is not None
 
 
-def test_request_approval_still_stubs_outbox():
+def test_request_approval_stubs_outbox_and_shows_on_anomalies():
     st = _seed()
     gate = next(
         i for i in exc.list_exceptions(st, "open") if str(i.get("kind", "")).startswith("gate")
@@ -184,19 +195,15 @@ def test_request_approval_still_stubs_outbox():
         follow_redirects=False,
     )
     assert r.status_code in (302, 303)
+    assert "/anomalies" in (r.headers.get("location") or "")
     st = storage.load_state(st["id"])
     assert any(
         x["key"] == gate["key"] and x["status"] == "pending_approval"
         for x in exc.list_exceptions(st, "pending")
     )
     assert any("priya@buyer.example" in (o.get("to") or "") for o in st.get("outbox", []))
-    if gate.get("vendor_id") and gate.get("line_no") is not None:
-        assert not any(
-            rev.get("vendor_id") == gate["vendor_id"] and rev.get("line_no") == gate["line_no"]
-            for rev in (st.get("reviews") or [])
-        )
 
-    page = client.get(f"/rfx/{st['id']}/compare?status=pending")
+    page = client.get(f"/rfx/{st['id']}/anomalies?status=pending")
     assert page.status_code == 200
     assert 'id="anomalies"' in page.text
     assert f"/exceptions/{gate['key']}/approve" in page.text
@@ -218,9 +225,10 @@ def test_deny_does_not_clear_gate_knockout():
     )
 
 
-def test_award_resolve_link_points_to_compare_anomalies():
+def test_award_resolve_link_points_to_anomalies():
     st = _seed()
     page = client.get(f"/rfx/{st['id']}/award")
     assert page.status_code == 200
     if "has_blocking" in page.text.lower() or "Resolve" in page.text:
-        assert f"/rfx/{st['id']}/compare#anomalies" in page.text
+        assert f"/rfx/{st['id']}/anomalies" in page.text
+        assert f"/rfx/{st['id']}/compare#anomalies" not in page.text

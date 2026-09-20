@@ -82,22 +82,25 @@ def test_compare_matrix_filter_bar_and_data_attrs():
     assert "data-cell-status=" in r.text
     assert "data-gate=" in r.text
     assert 'data-filter-control="cell-status"' in r.text
-    assert 'value="flagged"' in r.text
-    assert 'data-filter-control="gate"' in r.text
+    assert 'value="ok"' in r.text
+    assert 'value="converted"' in r.text
+    assert 'value="reviewed"' in r.text
+    assert 'value="flagged"' not in r.text
+    assert 'data-filter-control="gate"' not in r.text
     assert 'data-filter-multi="vendors"' in r.text
     assert "KqFilterBar" in r.text or "data-filter-bar" in r.text
 
 
-def test_compare_anomalies_keeps_status_chips_and_adds_client_filters():
+def test_anomalies_keeps_status_chips_and_adds_client_filters():
     st = _seed()
-    r = client.get(f"/rfx/{st['id']}/compare?status=open")
+    r = client.get(f"/rfx/{st['id']}/anomalies?status=open")
     assert r.status_code == 200
     assert 'id="anomalies"' in r.text
     assert 'id="anomalies-filters"' in r.text
-    assert f'/rfx/{st["id"]}/compare?status=open#anomalies' in r.text
-    assert f'/rfx/{st["id"]}/compare?status=pending#anomalies' in r.text
-    assert f'/rfx/{st["id"]}/compare?status=resolved#anomalies' in r.text
-    assert f'/rfx/{st["id"]}/compare?status=all#anomalies' in r.text
+    assert f'/rfx/{st["id"]}/anomalies?status=open' in r.text
+    assert f'/rfx/{st["id"]}/anomalies?status=pending' in r.text
+    assert f'/rfx/{st["id"]}/anomalies?status=resolved' in r.text
+    assert f'/rfx/{st["id"]}/anomalies?status=all' in r.text
     assert 'data-filter-control="kind"' in r.text
     assert 'value="coverage_gap"' in r.text
     assert 'value="gate_fail"' in r.text
@@ -110,9 +113,16 @@ def test_compare_anomalies_keeps_status_chips_and_adds_client_filters():
     assert re.search(r'data-kind="[^"]+"', r.text)
     assert "data-reason=" in r.text
 
-    r2 = client.get(f"/rfx/{st['id']}/compare?status=all")
+    r2 = client.get(f"/rfx/{st['id']}/anomalies?status=all")
     assert r2.status_code == 200
     assert "bg-slate-900 text-white" in r2.text  # active chip styling present
+
+def test_compare_has_no_anomalies_filters():
+    st = _seed()
+    r = client.get(f"/rfx/{st['id']}/compare")
+    assert r.status_code == 200
+    assert 'id="anomalies"' not in r.text
+    assert 'id="anomalies-filters"' not in r.text
 
 
 def test_award_page_has_no_filter_bar():
