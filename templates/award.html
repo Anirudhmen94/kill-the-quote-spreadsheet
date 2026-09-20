@@ -12,8 +12,29 @@
     <a href="/rfx/{{ state.id }}/outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
     <a href="/rfx/{{ state.id }}/memo.md" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Memo (.md)</a>
     <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Export award workbook</a>
+    {% if freeze_pack %}
+    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-emerald-600 text-emerald-800 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100">Download freeze pack (.zip)</a>
+    {% endif %}
   </div>
 </div>
+
+{% if exclusion_summary %}
+<div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
+  <strong>Same exclusions as Compare</strong> · {{ exclusion_summary.headline }}
+</div>
+{% endif %}
+
+{% if callouts %}
+<div class="mt-3 grid sm:grid-cols-2 gap-2">
+  {% for c in callouts[:6] %}
+  <div class="rounded-md border text-xs px-3 py-2
+    {% if c.level == 'danger' %}border-rose-300 bg-rose-50 text-rose-950
+    {% elif c.level == 'warn' %}border-amber-300 bg-amber-50 text-amber-950
+    {% else %}border-sky-200 bg-sky-50 text-sky-950{% endif %}">{{ c.text }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
 
 <div class="mt-6 grid lg:grid-cols-3 gap-6">
   <section class="lg:col-span-2 space-y-6">
@@ -127,6 +148,50 @@
   </section>
 
   <aside class="space-y-6">
+    <div class="rounded-lg border border-slate-200 bg-white">
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Freeze award</div>
+      <div class="px-4 py-3 text-xs space-y-2">
+        {% if freeze_pack and freeze_pack.status == 'frozen' %}
+        <div class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1.5">
+          Frozen · snapshot <span class="font-mono">{{ freeze_pack.calculation_snapshot_id }}</span>
+          · v{{ freeze_pack.vendor_data_version }} · {{ freeze_pack.strategy }}
+        </div>
+        <a href="/rfx/{{ state.id }}/award/freeze.zip" class="underline">Download notices + regrets + memo + xlsx</a>
+        {% elif freeze_pack and freeze_pack.status == 'historical' %}
+        <div class="rounded bg-amber-50 text-amber-950 border border-amber-200 px-2 py-1.5">
+          Previous freeze is historical — {{ freeze_pack.superseded_reason }}
+        </div>
+        {% endif %}
+        <p class="text-slate-600">Freezes the quality-gated split. Assumed cells stay out unless you confirm.</p>
+        <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2"
+              onsubmit="return confirm('Freeze this award pack to the current snapshot? Later vendor edits will mark it historical.')">
+          <label class="flex items-center gap-2"><input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)</label>
+          <button class="rounded bg-slate-900 text-white px-3 py-1.5">Freeze award pack</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-slate-200 bg-white">
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Blockers {% if blockers %}({{ blockers.total }}){% endif %}</div>
+      {% if blockers and blockers.total %}
+      <ul class="px-4 py-3 text-xs space-y-2 max-h-64 overflow-y-auto">
+        {% for b in blockers.entries %}
+        <li class="border-l-2 pl-2
+          {% if b.kind == 'conversion_failed' or b.kind == 'coverage_gap' %}border-rose-400
+          {% elif b.kind == 'assumed' %}border-amber-400
+          {% else %}border-slate-300{% endif %}">
+          <span class="font-medium">{{ b.label }}</span>
+          {% if b.line_no %} · L{{ b.line_no }}{% endif %}{% if b.vendor %} · {{ b.vendor }}{% endif %}
+          <div class="text-slate-600">{{ b.detail }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% if blockers.truncated %}<div class="px-4 pb-3 text-[11px] text-slate-500">Showing first items of {{ blockers.total }}.</div>{% endif %}
+      {% else %}
+      <div class="px-4 py-3 text-xs text-slate-500">No open blockers on awardable cells. Exclusions still listed above.</div>
+      {% endif %}
+    </div>
+
     <div class="rounded-lg border border-slate-200 bg-white">
       <div class="px-4 py-3 border-b border-slate-200 font-medium">Data quality</div>
       <ul class="px-4 py-3 text-xs space-y-2">

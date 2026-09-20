@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from core import analyst, llm, snapshots, storage
+from core import analyst, demo_ops, llm, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -23,7 +23,8 @@ SUGGESTED = [
 def ask_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     ready = any(v.get("extraction") for v in state["vendors"])
-    return render(request, "ask.html", state=state, active="ask", suggested=SUGGESTED, ready=ready)
+    prompts = demo_ops.DEMO_PROMPTS if demo_ops.is_demo_mode(state) else SUGGESTED
+    return render(request, "ask.html", state=state, active="ask", suggested=prompts, ready=ready, demo_script_mode=demo_ops.is_demo_mode(state))
 
 
 @router.post("/rfx/{rfx_id}/ask", response_class=HTMLResponse)

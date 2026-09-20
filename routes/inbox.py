@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from core import clarify, extractor, ingest, llm, snapshots, storage, vendor_sim
+from core import clarify, demo_ops, extractor, ingest, llm, snapshots, storage, vendor_sim
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -28,6 +28,9 @@ def inbox_page(request: Request, rfx_id: str):
 @router.post("/rfx/{rfx_id}/simulate", response_class=HTMLResponse)
 def simulate(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
+    ok, msg = demo_ops.guard_destructive(state, "regenerate_replies")
+    if not ok:
+        return error_fragment(msg + " Use Interview reset for a clean messy seed.", 403)
     try:
         vendor_sim.simulate_replies(state)
         vids = [v["vendor_id"] for v in state.get("vendors", []) if v.get("files")]

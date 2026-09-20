@@ -8,7 +8,7 @@ import pymupdf
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
-from core import engine, export, ingest, snapshots, storage
+from core import awardability, demo_ops, edge_callouts, engine, export, freeze, ingest, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -47,18 +47,33 @@ def _context_lines(text: str, snippet: str, radius: int = 3) -> list[dict]:
 @router.get("/rfx/{rfx_id}/compare", response_class=HTMLResponse)
 def compare_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
-    cmp = engine.build_comparison(state)
+    cmp = awardability.enrich_state_comparison(state) if any(v.get("extraction") for v in state["vendors"]) else engine.build_comparison(state)
     counts = snapshots.processing_counts(state)
-    # Record a comparison snapshot when we have at least one extraction
+    callouts = edge_callouts.edge_callouts(cmp) if cmp.get("vendors") else []
     if any(v.get("extraction") for v in state["vendors"]):
         snapshots.create_calculation_snapshot(
             state,
             "comparison",
             parameters={"provisional": bool(counts["processing"])},
-            result={"vendor_count": len(cmp["vendors"]), "line_count": cmp["line_count"]},
+            result={
+                "vendor_count": len(cmp["vendors"]),
+                "line_count": cmp["line_count"],
+                "exclusion_summary": cmp.get("exclusion_summary"),
+                "gates_summary": (cmp.get("gates") or {}).get("summary"),
+            },
         )
         storage.save_state(rfx_id, state)
-    return render(request, "compare.html", state=state, cmp=cmp, counts=counts, active="compare")
+    return render(
+        request,
+        "compare.html",
+        state=state,
+        cmp=cmp,
+        counts=counts,
+        callouts=callouts,
+        exclusion_summary=cmp.get("exclusion_summary"),
+        gates=cmp.get("gates"),
+        active="compare",
+    )
 
 
 @router.get("/rfx/{rfx_id}/evidence/{vendor_id}/{line_no}", response_class=HTMLResponse)
@@ -165,14 +180,13 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 def award_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
-    # Persist the live snapshot so exports can reference the same id
     if live.get("available"):
         storage.save_state(rfx_id, state)
     cmp = live.get("cmp") or engine.build_comparison(state)
     split = live.get("split")
     current_rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
     historical = [r for r in state.get("recommendations", []) if r.get("status") in ("stale", "superseded") or r.get("legacy")]
-    # Also include the legacy single recommendation if not already in list
+    pack = freeze.current_freeze(state)
     return render(
         request,
         "award.html",
@@ -182,8 +196,14 @@ def award_page(request: Request, rfx_id: str):
         live=live,
         current_rec=current_rec,
         historical_recs=historical,
+        blockers=(live.get("blockers") or (awardability.blockers_panel(cmp) if cmp.get("lines") else {"total": 0, "by_kind": {}, "items": []})),
+        exclusion_summary=live.get("exclusion_summary") or cmp.get("exclusion_summary"),
+        gates=live.get("gates") or cmp.get("gates"),
+        freeze_pack=pack,
+        callouts=edge_callouts.edge_callouts(cmp) if cmp.get("vendors") else [],
         active="award",
     )
+
 
 
 @router.get("/rfx/{rfx_id}/export.xlsx")
@@ -229,4 +249,35 @@ def export_memo(rfx_id: str, provisional: bool = False):
         export.award_memo_md(state, provisional=provisional or bool(counts["processing"])),
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="award-memo-{rfx_id}.md"'},
+    )
+
+
+@router.post("/rfx/{rfx_id}/award/freeze", response_class=HTMLResponse)
+def freeze_award_route(request: Request, rfx_id: str, confirm_assumed: bool = Form(False)):
+    state = load_or_404(rfx_id)
+    if not any(v.get("extraction") for v in state["vendors"]):
+        return error_fragment("Extract vendor responses before freezing an award.", 400)
+    try:
+        freeze.freeze_award(state, confirm_assumed=confirm_assumed, require_quality_gate=True)
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    storage.save_state(rfx_id, state)
+    return hx_redirect(f"/rfx/{rfx_id}/award")
+
+
+@router.get("/rfx/{rfx_id}/award/freeze.zip")
+def download_freeze_zip(rfx_id: str):
+    state = load_or_404(rfx_id)
+    pack = freeze.current_freeze(state)
+    if not pack:
+        # allow downloading the latest historical pack for audit
+        packs = state.get("freeze_packs") or []
+        pack = packs[-1] if packs else None
+    if not pack:
+        return error_fragment("No frozen award pack yet. Freeze an award first.", 404)
+    data = freeze.export_freeze_zip(state, pack)
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="freeze-{pack["id"]}.zip"'},
     )

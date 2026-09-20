@@ -9,3 +9,5 @@ __pycache__/
 uploads/
 terminals/
 *.egg-info/
+.vercel
+.env*

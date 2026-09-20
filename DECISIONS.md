@@ -36,3 +36,17 @@ The prototype had a data-consistency defect: an analyst answer saved before all 
 **Decision:** introduce an explicit vendor-data version + calculation snapshot layer (see `core/snapshots.py`) rather than hiding old answers or recomputing them in place. Historical answers remain for audit, clearly labelled stale, with a one-click rerun. Saves of stale answers are blocked. Exports are stamped with the same snapshot id shown on the Award page.
 
 **Deliberately left out of this fix:** multi-user locking beyond optimistic version checks, a full event-sourced store, and hard-coded demo totals.
+
+## Phases 1–3 upgrade (trust, gates, freeze, demo) — 2026-09-20
+
+Ported the useful Cloudflare RFx Desk ideas into this Vercel app without copying its contradictory UI.
+
+**What changed and why**
+
+1. **Exclusion SSOT** (`core/awardability.py`): Compare, Ask, and Award all read the same exclusion summary from one annotated comparison. Assumed / not_quoted / conversion_failed cells are labelled on the grid and never silently enter totals or a freeze.
+2. **Quality gates** (`core/gates.py`): Pass / Partial / Fail from the knockout questionnaire — one engine, used by Compare badges and the default award strategy. Default award is **quality-gated cheapest-per-line** (the VP question in the brief).
+3. **Freeze pack** (`core/freeze.py`): Immutable pack bound to calculation snapshot id + vendor data version; notices + regrets + memo + xlsx zipped. Later vendor edits mark the freeze historical via existing version bumps. Assumed cells require explicit confirm to enter a freeze.
+4. **Demo safety** (`core/demo_ops.py`): Demo mode blocks regenerate/wipe; Interview reset restores a **messy** golden seed (partial 27/30, USD/FX, photo per-box, per-kg email, unresolved “same as last year”, incomplete questionnaires) with one fresh Ask answer + recommendation stamped to the current snapshot.
+5. **Edge callouts** (`core/edge_callouts.py`): First-class banners on Compare/Award for partial coverage, FX, per-kg, photo confidence, freight-extra, gate Partial/Fail — not footnotes.
+
+**Deliberately still left out:** multi-user locking, real SMTP, inventing “last year” prices, auto-applying footnote discounts or missing freight as zero.

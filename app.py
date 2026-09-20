@@ -11,7 +11,7 @@ load_dotenv()
 from fastapi import FastAPI, Form, HTTPException, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, RedirectResponse, Response  # noqa: E402
 
-from core import ingest, llm, rfx_drafter, snapshots, storage, vendor_sim  # noqa: E402
+from core import demo_ops, ingest, llm, rfx_drafter, snapshots, storage, vendor_sim  # noqa: E402
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render  # noqa: E402
 from routes import ask, compare, inbox  # noqa: E402
 
@@ -163,3 +163,67 @@ def healthz(fingerprint: bool = False):
         files = [root / "app.py", root / "requirements.txt", root / "vercel.json"] + sorted((root / "core").glob("*.py")) + sorted((root / "routes").glob("*.py")) + sorted((root / "templates").rglob("*.html"))
         out["files"] = {str(p.relative_to(root)): hashlib.sha1(p.read_bytes()).hexdigest() for p in files if p.exists()}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Demo ops (Interview reset / Full reset / Demo mode)
+# ---------------------------------------------------------------------------
+
+@app.post("/demo/interview-reset")
+def demo_interview_reset():
+    """Restore the golden messy seed. Safe under demo mode."""
+    state = demo_ops.interview_reset()
+    storage.save_state(state["id"], state)
+    return RedirectResponse(f"/rfx/{state['id']}/compare", status_code=303)
+
+
+@app.post("/rfx/{rfx_id}/demo/interview-reset")
+def demo_interview_reset_inplace(rfx_id: str):
+    state = demo_ops.interview_reset(existing_id=rfx_id)
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/compare", status_code=303)
+
+
+@app.post("/rfx/{rfx_id}/demo/mode")
+def demo_toggle_mode(rfx_id: str, enabled: str = Form("1")):
+    state = load_or_404(rfx_id)
+    demo_ops.set_demo_mode(state, enabled in ("1", "true", "on", "yes"))
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/compare", status_code=303)
+
+
+@app.post("/rfx/{rfx_id}/demo/full-reset")
+def demo_full_reset(rfx_id: str, confirm: str = Form("")):
+    state = load_or_404(rfx_id)
+    ok, msg = demo_ops.guard_destructive(state, "full_wipe")
+    if not ok and confirm != "FULL":
+        return error_fragment(msg + " Type FULL in the confirm field to proceed after turning Demo mode off, or use Interview reset.", 403)
+    # Wipe chat / recommendations / freeze / reviews; keep RFx + vendors files but clear extractions
+    state["chat"] = []
+    state["recommendations"] = []
+    state["recommendation"] = None
+    state["reviews"] = []
+    state["freeze"] = None
+    state["freeze_packs"] = []
+    for v in state.get("vendors", []):
+        v["extraction"] = None
+        v["texts"] = {}
+        v["status"] = "received" if v.get("files") else "awaiting"
+        v["error"] = None
+    snapshots.bump_vendor_data_version(state, "manual_edit", affected_vendor_ids=[v["vendor_id"] for v in state.get("vendors", [])], notice="Full reset · extractions and awards cleared")
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/inbox", status_code=303)
+
+
+@app.get("/demo/script")
+def demo_script_md():
+    from pathlib import Path as P
+    body = (P(__file__).resolve().parent / "DEMO_SCRIPT.md").read_text()
+    return Response(body, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/demo/decisions")
+def demo_decisions_md():
+    from pathlib import Path as P
+    body = (P(__file__).resolve().parent / "DECISIONS.md").read_text()
+    return Response(body, media_type="text/markdown; charset=utf-8")

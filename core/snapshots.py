@@ -672,13 +672,40 @@ def export_meta(state: dict, snapshot: dict | None = None, provisional: bool = F
 
 
 def live_award_calculation(state: dict) -> dict:
-    """Current live award calculation with snapshot metadata (deterministic)."""
+    """Current live award calculation with snapshot metadata (deterministic).
+
+    Default strategy: quality-gated cheapest-per-line. Assumed / conversion-failed
+    / not-quoted cells never enter totals. Compare / Ask / Award all read this.
+    """
     ensure_snapshot_fields(state)
     if not any(v.get("extraction") for v in state.get("vendors", [])):
         return {"available": False}
-    cmp = engine.build_comparison(state)
-    split = engine.cheapest_per_line(cmp, None, False, False)
-    params = {"strategy": "split_cheapest", "require_cleared_questionnaire": False, "allow_needs_review": False}
+
+    # Local imports avoid cycles (awardability/gates import engine only)
+    from . import awardability, gates
+
+    cmp = awardability.enrich_state_comparison(state)
+    g = cmp["gates"]
+    eligible = gates.gate_filter_vendors(cmp, g, True)
+    if not eligible:
+        split = {
+            "eligible_vendors": [],
+            "rows": [{"line_no": ln["line_no"], "description": ln["description"], "annual_qty": ln["annual_qty"], "winner": None, "unit_inr": None, "extended_inr": None, "runner_up": None, "runner_up_unit_inr": None} for ln in cmp["lines"]],
+            "total_extended_inr": 0.0,
+            "uncovered_lines": [ln["line_no"] for ln in cmp["lines"]],
+            "share_by_vendor": {},
+            "caveats": ["No vendor cleared the quality questionnaire. Quality-gated award has nothing to award."],
+            "allow_needs_review": False,
+        }
+    else:
+        split = engine.cheapest_per_line(cmp, eligible, False, False)
+
+    params = {
+        "strategy": "quality_gated_cheapest",
+        "require_cleared_questionnaire": True,
+        "allow_needs_review": False,
+        "eligible_vendor_ids": eligible or [],
+    }
     snap = create_calculation_snapshot(
         state,
         "award_scenario",
@@ -688,22 +715,29 @@ def live_award_calculation(state: dict) -> dict:
             "covered_line_count": cmp["line_count"] - len(split["uncovered_lines"]),
             "uncovered_lines": split["uncovered_lines"],
             "share_by_vendor": split["share_by_vendor"],
-            "eligible_vendors": split["eligible_vendors"],
+            "eligible_vendors": split.get("eligible_vendors") or [],
+            "exclusion_summary": cmp.get("exclusion_summary"),
+            "gates_summary": g.get("summary"),
         },
     )
     return {
         "available": True,
         "snapshot": snap,
         "vendor_data_version": snap["vendor_data_version"],
-        "strategy": "split_cheapest (usable quotes only)",
+        "strategy": "quality-gated cheapest per line",
         "total_extended_inr": split["total_extended_inr"],
         "covered_line_count": cmp["line_count"] - len(split["uncovered_lines"]),
         "uncovered_lines": split["uncovered_lines"],
         "share_by_vendor": split["share_by_vendor"],
         "split": split,
         "cmp": cmp,
+        "gates": g,
+        "blockers": awardability.blockers_panel(cmp),
+        "exclusion_summary": cmp.get("exclusion_summary"),
         "created_at": snap["created_at"],
     }
+
+
 
 
 def context_for_analyst(state: dict, cmp: dict, snapshot: dict) -> str:

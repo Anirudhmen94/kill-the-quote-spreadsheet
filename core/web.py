@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from . import engine, llm, snapshots, storage
+from . import demo_ops, engine, llm, snapshots, storage
 
 BASE = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
@@ -38,6 +38,9 @@ def render(request: Request, name: str, **ctx) -> HTMLResponse:
         base["data_status"] = snapshots.data_status(state, context=context)
         base["version_events"] = state.get("version_events") or []
         base["vendor_data_version"] = snapshots.current_version(state)
+        base["demo_mode"] = demo_ops.is_demo_mode(state)
+        base["lifecycle"] = demo_ops.lifecycle_stage(state)
+        base["demo_prompts"] = demo_ops.DEMO_PROMPTS
     base.update(ctx)
     return templates.TemplateResponse(request, name, base)
 
