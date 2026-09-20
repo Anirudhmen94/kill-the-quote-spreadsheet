@@ -37,31 +37,11 @@
 </div>
 {% endif %}
 
-{% if exclusion_summary %}
-<div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
-  <strong>Same exclusions as Compare</strong> · {{ exclusion_summary.headline }}
-</div>
-{% endif %}
-
 {% if has_blocking_exceptions %}
 <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
   <strong>Resolve exceptions first.</strong>
   Open or pending-approval exceptions still block a clean quality-gated award.
   <a href="/rfx/{{ state.id }}/exceptions" class="underline ml-1">Open Exceptions</a>
-</div>
-{% endif %}
-
-{% if callouts %}
-<div class="mt-3 grid sm:grid-cols-2 gap-2">
-  {% for c in callouts %}
-  <div class="rounded-md border text-xs px-3 py-2
-    {% if c.level == 'danger' %}border-rose-300 bg-rose-50 text-rose-950
-    {% elif c.level == 'warn' %}border-amber-300 bg-amber-50 text-amber-950
-    {% else %}border-sky-200 bg-sky-50 text-sky-950{% endif %}">
-    <span class="font-semibold uppercase tracking-wide text-[10px] opacity-70">{{ c.kind.replace('_',' ') }}</span>
-    <div class="mt-0.5">{{ c.text }}</div>
-  </div>
-  {% endfor %}
 </div>
 {% endif %}
 

@@ -190,10 +190,8 @@ def award_page(request: Request, rfx_id: str):
         current_rec=current_rec,
         historical_recs=historical,
         blockers=(live.get("blockers") or (awardability.blockers_panel(cmp) if cmp.get("lines") else {"total": 0, "by_kind": {}, "items": []})),
-        exclusion_summary=live.get("exclusion_summary") or cmp.get("exclusion_summary"),
         gates=live.get("gates") or cmp.get("gates"),
         freeze_pack=pack,
-        callouts=edge_callouts.edge_callouts(cmp) if cmp.get("vendors") else [],
         active="award",
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
         flash=flash,
@@ -203,7 +201,6 @@ def award_page(request: Request, rfx_id: str):
         discount_confirmations=state.get("discount_confirmations") or {},
         conditional_discounts=(live.get("conditional_discounts") if live.get("available") else None),
         buyer_review_log=state.get("buyer_review_log") or state.get("reviews") or [],
-        blended_rate_banner=cmp.get("blended_rate_banner"),
     )
 
 
