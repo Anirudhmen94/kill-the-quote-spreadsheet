@@ -1,27 +1,43 @@
-# Kill the Quote Spreadsheet — decisions note (one page)
+# Kill the Quote Spreadsheet — decisions (one page)
 
-**Prototype:** https://kill-the-quote-spreadsheet-lac.vercel.app  
-**Persona:** category buyer for corrugated packaging (Chakan plant).  
-**Stack:** FastAPI + HTMX, Claude for draft / extract / analyst, deterministic engine for maths, Vercel + Blob.
+**Live prototype:** [kill-the-quote-spreadsheet-lac.vercel.app](https://kill-the-quote-spreadsheet-lac.vercel.app) · **This note in-app:** [/demo/decisions](https://kill-the-quote-spreadsheet-lac.vercel.app/demo/decisions)  
+**Persona:** category buyer, corrugated packaging. **Rule followed:** stub plumbing (SMTP); don’t fake extraction, reasoning, or Ask answers.
 
-## What I decided
+Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 
-**Trust over format theatre.** The brief’s messy edges matter more than a clean happy path. Every price must carry verbatim evidence; the model never does arithmetic; uncertainty is a first-class cell state (`ok` / `converted` / `needs review` / `unresolved` / missing). Totals exclude anything unsure unless the buyer overrides with a note.
+---
 
-**Generate replies from the live RFx, then read them for real.** Vendor files are synthesised in fixed ugly formats (Excel-per-100, PDF footnotes, USD Word, angled photo, ₹/kg email) but extraction is a live model call — not hardcoded demo answers. Ask answers are tool-backed engine tables, not recalled prose.
+## Decisions → where to see them
 
-**Quality gates at draft time.** The buyer picks gates on the home screen; the questionnaire is generated from those gates plus the brief. Gates are the single Pass/Partial/Fail engine for Compare and for the default award: *cheapest per line among vendors who cleared knockouts* — the VP question in the assignment.
+| Decision | Why | See it here |
+|---|---|---|
+| **Messy edges over happy path** | Assignment cares about uncertainty, not a clean Excel. | [Email](https://kill-the-quote-spreadsheet-lac.vercel.app/) → Simulate 5 replies (Excel / PDF / Word / photo / email) → Read all |
+| **Live AI for draft, extract, free-ask** | Brief: don’t hardcode demo answers. | Home draft · Email **Read all** · Award **Ask** free-form textarea |
+| **Maths in code, prose from the model** | Trust: ₹4cr decisions can’t rest on recalled numbers. | Compare matrix footers · Award packs · Ask answers (tables = engine) |
+| **Quality gates at draft time** | Questionnaire comes from gates + brief; gates drive eligibility. | Home: pick gates → draft · Compare gate badges · Award “Pass vendors” |
+| **Default award = line split** | Assignment VP question: cheapest per line among who cleared quality. | Award **Who wins** packs (not winner-takes-all) |
+| **Compare owns anomalies** | One place to see prices and fix flags. | `/rfx/<id>/compare` matrix + `#anomalies` · Override / Send for approval / Deny |
+| **Award = Ask → Lock → Send** | Short close path; Ask stays strong after Compare. | `/rfx/<id>/award`: Ask card → packs → **Lock award** → **Send notices** |
+| **Premade Ask = fast cache; free-ask = live Claude** | Demo speed ≠ Email Read-all latency; typed questions stay real. | Award Ask: 3 premade buttons (instant) · textarea (live API) |
+| **Freeze binds a snapshot** | Defensible packet; later re-reads don’t silently rewrite a frozen memo. | Award **Lock** · then Outbox notices / freeze.zip |
+| **Email channel, stub SMTP** | Brief allows fake mail; Outbox is the proof. | `/rfx/<id>/email` Incoming + Outbox · award/regret stubs after Send |
+| **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare cell/vendor/gate filters (Award: none) |
 
-**Freeze before you defend.** Award freeze locks strategy, line awards, totals, notices and regrets to a calculation snapshot. Later re-reads or exception overrides make that freeze historical so an old memo cannot sit next to new totals.
+---
 
-**Compare absorbs anomalies.** One Compare tab: five-vendor price matrix plus an Anomalies panel (`#anomalies`) for flagged cells, gate Fail/Partial, and coverage gaps. Override (apply into decision), Send for approval (pending + stub outbox), or Deny (close without putting a value into award totals) — same three actions on open anomaly rows and in the flagged-cell evidence drawer. Pending is Approve/Reject only; Resolved includes overridden, approved, and denied. `/exceptions` redirects to `/compare#anomalies`.
+## What we added (product surface)
 
-**Email is the channel, stubbed on purpose.** Outbound RFx, clarifications (editable drafts), award/regret notices, and internal stakeholder alerts all land in Outbox with no real SMTP — per the brief’s “stub the plumbing, don’t fake the AI loops.”
+1. **Draft** — brief + quality-check prefs → live RFx + auto questionnaire.  
+2. **Email** — simulate messy replies, live parallel extract, clarifications, Outbox.  
+3. **Compare** — normalised INR/pc matrix, evidence drawer, anomalies + three actions, Ask drawer link, filters.  
+4. **Award** — Ask-before-you-lock (premade + live), per-vendor why packs, one-click Lock (complete or auto-partial), Send stub notices, success banners.  
+5. **Trust chrome** — cell states, vendor data version / snapshots, recommendation before lock, historical freeze when data moves.
 
-## What I deliberately left out
+## What we deliberately left out
 
-Real SMTP and vendor portals; inventing “same as last year” prices; auto-applying footnote discounts or missing freight as zero; multi-buyer auth / ERP hand-off; private blob ACLs (synthetic demo data); guaranteeing sub-4s live reads of five documents (physics of five parallel API calls). Also removed interview chrome (lifecycle/demo strips) so the buyer UI stays the product, not the rehearsal tooling.
+Real SMTP / vendor portals · inventing “same as last year” prices · auto-zeroing missing freight or footnote discounts · multi-buyer auth / ERP · private blob ACLs · guaranteeing sub-4s five-file live extract · winner-takes-all as default · charts/exports polish (Phase C paused) · interview lifecycle/demo strips in the main buyer UI · burying Ask only as a Compare popup.
 
 ## Where the interesting problem is
 
-Extraction is increasingly commodity. The hard product problem is **row matching under ambiguity and awarding under partial data** — and making the buyer’s next action obvious (evidence click, clarification email, exception override, freeze). The next thing I would build is not a better parser; it is a vendor-side “confirm these mappings” loop that closes the gap without anyone reopening Excel.
+Extraction is getting commodity. The hard product is **awarding under partial, ambiguous data** and making the next action obvious (evidence, anomaly action, Ask, Lock, Send). Next I’d build a vendor “confirm these mappings” loop — not a fancier parser.
+
