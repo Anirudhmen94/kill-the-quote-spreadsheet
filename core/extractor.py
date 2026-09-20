@@ -24,6 +24,8 @@ Rules:
    evidence object whose `snippet` is copied VERBATIM (character for character, 5-200 chars) from the anchored
    text you are given, and whose `location` is the anchor tag on that line (e.g. "Quotation!F14", "page 2",
    "para 6", "table 1 row 4", "image line 12", "line 3"). If you cannot point at text, do not report the value.
+   Never abbreviate a snippet with "..." and never shorten a table row: if a passage is long, quote the shortest
+   contiguous span that contains the value (e.g. "priced separately at USD 183.5 per thousand").
 2. NEVER INVENT. If a line item is not priced anywhere, put it in `not_quoted_line_nos`. If a currency, unit basis
    or quantity basis is not stated, leave it null/unknown and mark status needs_review with the reason.
    If the supplier refers to information you do not have ("same as last year", "as per previous contract",
@@ -153,6 +155,33 @@ def _find_snippet(snippet: str, texts: dict[str, str]) -> tuple[bool, str | None
         for fid, txt in texts.items():
             if sc in _canon(txt):
                 return True, fid, 0.99
+    # Elided quote ("Line 1 ... is priced separately at USD 183.5"): every kept segment must be present, in order.
+    segments = [_canon(p) for p in re.split(r"\.{3}|\u2026", snippet) if len(_canon(p)) >= 3]
+    if len(segments) > 1:
+        for fid, txt in texts.items():
+            ct = _canon(txt)
+            pos = 0
+            ok = True
+            for seg in segments:
+                idx = ct.find(seg, pos)
+                if idx < 0 or idx - pos > 600:
+                    ok = False
+                    break
+                pos = idx + len(seg)
+            if ok:
+                return True, fid, 0.95
+    # Abbreviated table row: all numeric tokens and nearly all words of the snippet appear on one source line.
+    tokens = [t for t in re.findall(r"[a-z0-9][a-z0-9.\-]*", sc) if len(t) > 2 or t.isdigit()]
+    numeric = [t for t in tokens if re.search(r"\d", t)]
+    if len(tokens) >= 3:
+        for fid, txt in texts.items():
+            for line in txt.splitlines():
+                ln = _canon(line)
+                if not ln:
+                    continue
+                hit = sum(1 for t in tokens if t in ln)
+                if hit / len(tokens) >= 0.85 and all(n in ln for n in numeric):
+                    return True, fid, round(hit / len(tokens), 2)
     # fuzzy: compare against each line of each file (anchored lines are short)
     best = (0.0, None)
     for fid, txt in texts.items():
