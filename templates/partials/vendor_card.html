@@ -6,7 +6,8 @@
       <div class="font-medium truncate">{{ v.name }}</div>
       <div class="text-xs text-slate-500 truncate">{{ v.city }}{% if v.email %} &middot; {{ v.email }}{% endif %}{% if v.received_at %} &middot; received {{ v.received_at[:10] }}{% endif %}</div>
     </div>
-    <span data-role="status" class="shrink-0 inline-flex rounded-full px-2 py-0.5 text-xs border
+    <span data-role="status" title="Unread = files arrived; Read = extraction done; Awaiting = invited, no file yet."
+      class="shrink-0 inline-flex rounded-full px-2 py-0.5 text-xs border
       {% if v.status == 'extracted' %}bg-emerald-50 text-emerald-700 border-emerald-200{% elif v.status == 'error' %}bg-rose-50 text-rose-700 border-rose-200{% elif v.status == 'received' %}bg-amber-50 text-amber-700 border-amber-200{% elif v.status == 'extracting' %}bg-sky-50 text-sky-700 border-sky-200{% else %}bg-slate-100 text-slate-600 border-slate-200{% endif %}">
       {% if v.status == 'extracted' %}Read{% elif v.status == 'received' %}Unread{% elif v.status == 'awaiting' %}Awaiting reply{% else %}{{ v.status|capitalize }}{% endif %}
     </span>
@@ -62,7 +63,9 @@
     {% endif %}
     {% if ext %}
     <button hx-get="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/questionnaire" hx-target="#drawer-root" class="rounded border border-slate-300 px-2.5 py-1.5 hover:bg-slate-50">Terms &amp; questionnaire</button>
-    <button hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify" hx-target="#drawer-root" hx-indicator="#busy-{{ v.vendor_id }}" class="rounded border border-slate-300 px-2.5 py-1.5 hover:bg-slate-50">Draft clarification</button>
+    <button hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify" hx-target="#drawer-root" hx-indicator="#busy-{{ v.vendor_id }}"
+      class="rounded border border-slate-300 px-2.5 py-1.5 hover:bg-slate-50"
+      title="Draft an email asking this vendor about missing lines or unanswered knockout questions. Edit, Save, then Send (stub).">Draft clarification</button>
     {% endif %}
     {% if v.format == 'upload' %}
     <button hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/remove" hx-confirm="Remove this vendor and its files?" class="ml-auto text-slate-400 hover:text-rose-600">Remove</button>

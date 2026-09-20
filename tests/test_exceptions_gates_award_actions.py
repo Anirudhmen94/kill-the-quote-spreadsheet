@@ -52,6 +52,12 @@ def test_home_shows_gate_builder():
     assert "gates-builder" in r.text
     assert "ISO 9001" in r.text
     assert 'name="gate_knockout"' in r.text
+    assert 'name="gate_enabled"' in r.text
+    assert 'name="gate_label"' in r.text
+    # Buyer does not author question wording or answer type on home
+    assert 'name="gate_question"' not in r.text
+    assert 'name="gate_answer_type"' not in r.text
+    assert "Add check" in r.text
 
 
 def test_draft_default_and_custom_gates():
@@ -62,34 +68,74 @@ def test_draft_default_and_custom_gates():
     assert rfx["questionnaire"][0]["knockout"] is True
     assert rfx.get("quality_gates")
 
-    gates = draft_gates.default_gates()
-    gates.append(
-        {
-            "id": "custom_pe",
-            "label": "PE coating",
-            "knockout": True,
-            "enabled": True,
-            "answer_type": "yes_no",
-            "question": "Can you supply PE-coated board for moisture-sensitive snacks?",
-        }
-    )
+    # Custom short label only — system generates question (not empty)
+    gates = [
+        {"id": "custom_pe", "label": "PE coating", "knockout": True, "enabled": True},
+    ]
     rfx2 = rfx_drafter.draft_rfx(vendor_sim.EXAMPLE_BRIEF, gates=gates)
-    pe = next(q for q in rfx2["questionnaire"] if "PE-coated" in q["text"])
+    assert len(rfx2["questionnaire"]) == 1
+    pe = rfx2["questionnaire"][0]
     assert pe["knockout"] is True
     assert pe.get("gate_id") == "custom_pe"
+    assert pe["text"] and "PE coating" in pe["text"]
+
+
+def test_select_three_checks_generates_exactly_those_questions():
+    gates = [
+        {"id": "iso_9001", "label": "ISO 9001 certification", "knockout": True, "enabled": True},
+        {"id": "bct_reports", "label": "BCT test reports", "knockout": True, "enabled": True},
+        {"id": "fsc_recycled", "label": "FSC / recycled content preferred", "knockout": False, "enabled": True},
+    ]
+    rfx = rfx_drafter.draft_rfx(vendor_sim.EXAMPLE_BRIEF, gates=gates)
+    qs = rfx["questionnaire"]
+    assert len(qs) == 3
+    assert [q["gate_id"] for q in qs] == ["iso_9001", "bct_reports", "fsc_recycled"]
+    assert [q["knockout"] for q in qs] == [True, True, False]
+    assert all(q["text"] for q in qs)
+    assert "ISO 9001" in qs[0]["text"]
+    assert "BCT" in qs[1]["text"]
+
+
+def test_custom_short_label_generates_nonempty_question():
+    q_text, at = draft_gates.generate_question_for_check(
+        {"id": "custom_fire", "label": "Fire safety cert"},
+        brief=vendor_sim.EXAMPLE_BRIEF,
+    )
+    assert q_text.strip()
+    assert "Fire safety" in q_text or "fire safety" in q_text.lower()
+    assert at == "document"  # "cert" hint
+
+
+def test_form_ignores_buyer_authored_question_fields():
+    """Home no longer posts gate_question / gate_answer_type; if present, ignore them."""
+    class FakeForm(dict):
+        def getlist(self, key):
+            return self.get(key, [])
+
+    form = FakeForm(
+        {
+            "gate_id": ["iso_9001"],
+            "gate_label": ["ISO 9001 certification"],
+            "gate_enabled": ["iso_9001"],
+            "gate_knockout": ["iso_9001"],
+            "gate_question": ["BUYER WROTE THIS SHOULD BE IGNORED"],
+            "gate_answer_type": ["text"],
+        }
+    )
+    gates = draft_gates.parse_gates_from_form(form)
+    assert len(gates) == 1
+    assert "question" not in gates[0] or gates[0].get("question") != "BUYER WROTE THIS SHOULD BE IGNORED"
+    enriched = draft_gates.enrich_gates(gates, vendor_sim.EXAMPLE_BRIEF)
+    assert "BUYER WROTE THIS" not in enriched[0]["question"]
+    assert enriched[0]["answer_type"] == "document"
 
 
 def test_draft_endpoint_custom_gate_shows_on_rfx_page():
-    # Prefer multipart list form fields matching the home page builder.
+    # Home posts short labels only — no gate_question / gate_answer_type.
     data = {
         "brief": vendor_sim.EXAMPLE_BRIEF,
         "gate_id": ["iso_9001", "custom_pe"],
         "gate_label": ["ISO 9001 certification", "PE coating"],
-        "gate_question": [
-            "Is your manufacturing site ISO 9001 certified? Attach certificate.",
-            "Can you supply PE-coated board for moisture-sensitive snacks?",
-        ],
-        "gate_answer_type": ["document", "yes_no"],
         "gate_enabled": ["iso_9001", "custom_pe"],
         "gate_knockout": ["iso_9001", "custom_pe"],
     }
@@ -100,8 +146,8 @@ def test_draft_endpoint_custom_gate_shows_on_rfx_page():
     rfx_id = loc.split("/rfx/")[1].split("/")[0]
     page = client.get(f"/rfx/{rfx_id}/rfx")
     assert page.status_code == 200
-    assert "PE-coated" in page.text or "PE coating" in page.text
-    assert "Quality gates that drove" in page.text
+    assert "PE coating" in page.text
+    assert "Quality checks that drove" in page.text or "Quality gates that drove" in page.text
 
 
 def test_exceptions_override_approval_reject_flow():

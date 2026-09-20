@@ -20,9 +20,9 @@ Produce a realistic, procurement-grade RFx that a supplier would recognise:
   and print specs. Quantities should be annual volumes appropriate to the brief. SKU codes sequential.
 - Descriptions must be specific enough that a vendor could quote them without calling back.
 - Commercial terms: INR per piece, delivered, exclusive of GST is the default basis unless the brief says otherwise.
-- Questionnaire: 8-12 questions on quality systems, testing (BCT/ECT/bursting), material sourcing
-  (FSC / recycled content), food-contact or moisture requirements if relevant, capacity, and
-  references. Mark 3-4 as knockout (a 'No' disqualifies).
+- Questionnaire: emit a short stub only (the system replaces it from the buyer's selected
+  quality checks). Prefer matching the check labels if listed in the user message; do not invent
+  a long unrelated questionnaire.
 - Follow the brief's numbers if it gives any (volumes, sizes, plant location, timelines). Never contradict it.
 - Do not invent supplier names or prices. This is the buyer's document.
 - Keep each line description under ~80 characters so the full 30-item payload fits reliably.
@@ -67,7 +67,7 @@ def draft_rfx(brief: str, log: list | None = None, gates: list[dict] | None = No
     if rfx_cache.is_example_brief(brief):
         started = time.time()
         data = rfx_cache.enrich_cached_rfx(rfx_cache.cached_chakan_rfx())
-        data = draft_gates.apply_gates_to_rfx(data, gates)
+        data = draft_gates.apply_gates_to_rfx(data, gates, brief=brief)
         if log is not None:
             log.append(
                 {
@@ -116,7 +116,7 @@ def draft_rfx(brief: str, log: list | None = None, gates: list[dict] | None = No
         )
 
     data = _enrich(draft.model_dump(mode="json"))
-    return draft_gates.apply_gates_to_rfx(data, gates)
+    return draft_gates.apply_gates_to_rfx(data, gates, brief=brief)
 
 
 def new_state(brief: str, rfx: dict) -> dict:

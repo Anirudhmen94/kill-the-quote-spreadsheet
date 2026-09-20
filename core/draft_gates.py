@@ -1,15 +1,17 @@
-"""Draft-time quality gates → questionnaire mapping.
+"""Draft-time quality checks → auto-generated questionnaire.
 
-Buyers pick gates on the home page before drafting. Each enabled gate becomes
-a questionnaire item (knockout gates → knockout questions). Cached EXAMPLE_BRIEF
-drafts keep canned lines/terms and rebuild the questionnaire from the chosen
-gates so customization stays instant.
+Buyers pick short-label quality checks on the home page (On + optional Knockout).
+They do NOT author question wording or answer types. On draft, selected checks
+become questionnaire items: known ids use solid templates (lightly tailored from
+the brief); custom short labels get a sensible yes_no/document question.
 """
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 
 # Sensible defaults for corrugated India / snacks-plant procurement.
+# `question` / `answer_type` here are SYSTEM templates — not buyer-authored fields.
 DEFAULT_GATES: list[dict] = [
     {
         "id": "iso_9001",
@@ -77,6 +79,20 @@ DEFAULT_GATES: list[dict] = [
     },
 ]
 
+_DEFAULT_BY_ID = {g["id"]: g for g in DEFAULT_GATES}
+
+# Keywords that suggest a document upload rather than yes/no.
+_DOC_HINTS = re.compile(
+    r"\b(cert|certificate|certification|report|reports|declaration|attach|attachment|"
+    r"document|docs|iso|fssai|audit|coa|msds|sds)\b",
+    re.I,
+)
+_TEXT_HINTS = re.compile(
+    r"\b(capacity|utilisation|utilization|lead\s*time|volume|mt\b|tonnage|headcount|"
+    r"describe|explain|how\s+many|what\s+is)\b",
+    re.I,
+)
+
 
 def default_gates() -> list[dict]:
     return deepcopy(DEFAULT_GATES)
@@ -98,21 +114,152 @@ def gates_match_defaults(gates: list[dict] | None) -> bool:
             return False
         if bool(g.get("enabled", True)) != bool(d.get("enabled", True)):
             return False
-    # Custom-added gates (ids not in defaults) break the match
     for g in gates:
         if g.get("id") not in defaults and g.get("enabled", True):
             return False
     return True
 
 
-def parse_gates_from_form(form) -> list[dict]:
-    """Parse multi-value gate_* fields from a Starlette/FastAPI Form/UploadFile form.
+def brief_context(brief: str | None) -> dict:
+    """Light heuristics: plant/location and category cues from the buyer brief."""
+    text = (brief or "").strip()
+    loc = None
+    # Common India plant / city patterns in this demo domain
+    m = re.search(
+        r"\b(?:plant\s+in|deliver(?:y|ies)?\s+(?:to|at)|located\s+in|site\s+at)\s+"
+        r"([A-Z][A-Za-z]+(?:\s*\([^)]+\))?)",
+        text,
+    )
+    if m:
+        loc = m.group(1).strip()
+    if not loc:
+        for place in ("Chakan", "Pune", "Nashik", "Bhiwandi", "Manesar", "Sri City", "Hosur"):
+            if re.search(rf"\b{re.escape(place)}\b", text, re.I):
+                loc = place
+                break
+    category = None
+    if re.search(r"\b(snack|namkeen|chips|fmcg\s+food|food[\s-]?contact)\b", text, re.I):
+        category = "snacks / food packaging"
+    elif re.search(r"\bcorrugat", text, re.I):
+        category = "corrugated packaging"
+    return {"location": loc, "category": category, "brief": text}
 
-    Expected fields (repeated rows):
-      gate_id, gate_label, gate_question, gate_answer_type, gate_knockout (on/off), gate_enabled (on/off)
+
+def _infer_answer_type(label: str) -> str:
+    if _DOC_HINTS.search(label or ""):
+        return "document"
+    if _TEXT_HINTS.search(label or ""):
+        return "text"
+    return "yes_no"
+
+
+def _question_from_custom_label(label: str, ctx: dict) -> tuple[str, str]:
+    """Build a sensible question + answer_type from a short buyer label."""
+    label = (label or "").strip() or "this requirement"
+    at = _infer_answer_type(label)
+    loc = ctx.get("location")
+    plant_bit = f" for deliveries to {loc}" if loc else ""
+
+    if at == "document":
+        # Certs / reports → ask to confirm + attach
+        if re.search(r"\b(cert|certificate|certification|iso)\b", label, re.I):
+            q = f"Do you hold a current {label}? Attach the certificate{plant_bit}."
+        elif re.search(r"\b(report|reports|declaration|coa|msds|sds)\b", label, re.I):
+            q = f"Can you provide {label} for the grades you quote{plant_bit}?"
+        else:
+            q = f"Can you provide documentation for {label}? Attach supporting evidence."
+        return q, "document"
+
+    if at == "text":
+        if re.search(r"lead\s*time", label, re.I):
+            where = f" to {loc}" if loc else " to the buyer's plant"
+            q = f"What is your typical {label.lower()}{where}?"
+        elif re.search(r"capacity|utilisation|utilization", label, re.I):
+            q = f"Please state your {label.lower()} (figures and units)."
+        else:
+            q = f"Please describe your {label}."
+        return q, "text"
+
+    # yes_no default
+    if re.search(r"\b(can|do|have|support|able|meet)\b", label, re.I):
+        q = f"{label.rstrip('?')}?"
+    else:
+        q = f"Can you confirm {label}{plant_bit}?"
+    if not q.endswith("?"):
+        q = q.rstrip(".") + "?"
+    return q, "yes_no"
+
+
+def _tailor_template(template: str, gate_id: str, ctx: dict) -> str:
+    """Lightly tailor a known template using brief location/category."""
+    q = template
+    loc = ctx.get("location")
+    if gate_id == "delivery_plant" and loc:
+        q = (
+            f"Can you support weekly delivered shipments to {loc} "
+            f"on the stated schedule?"
+        )
+    elif gate_id == "lead_time" and loc:
+        q = f"Typical lead time from approved artwork to first delivery at {loc}?"
+    elif gate_id == "food_contact" and ctx.get("category"):
+        q = (
+            "Do cartons intended for snack foods meet food-contact / hygiene "
+            "requirements where applicable?"
+        )
+    elif gate_id == "iso_9001" and loc:
+        q = (
+            f"Is your manufacturing site (supplying {loc}) ISO 9001 certified? "
+            f"Attach certificate."
+        )
+    return q
+
+
+def generate_question_for_check(gate: dict, brief: str | None = None) -> tuple[str, str]:
+    """Return (question_text, answer_type) for a check — never buyer-authored.
+
+    Known default ids → solid templates, lightly tailored from the brief.
+    Custom short labels → sensible yes_no / document / text from the label.
+    """
+    ctx = brief_context(brief)
+    gid = str(gate.get("id") or "")
+    label = str(gate.get("label") or gid).strip() or gid
+
+    known = _DEFAULT_BY_ID.get(gid)
+    if known:
+        at = known.get("answer_type") or "yes_no"
+        q = _tailor_template(known.get("question") or known.get("label") or label, gid, ctx)
+        return q, at if at in ("yes_no", "text", "document") else "yes_no"
+
+    return _question_from_custom_label(label, ctx)
+
+
+def enrich_gates(gates: list[dict] | None, brief: str | None = None) -> list[dict]:
+    """Fill question + answer_type on every gate from system generation.
+
+    Ignores any buyer-posted question / answer_type so the home form cannot
+    author questionnaire wording.
+    """
+    gates = deepcopy(gates) if gates is not None else default_gates()
+    out = []
+    for g in gates:
+        g = dict(g)
+        q, at = generate_question_for_check(g, brief)
+        g["question"] = q
+        g["answer_type"] = at
+        g["label"] = str(g.get("label") or g.get("id") or "").strip() or str(g.get("id"))
+        g["knockout"] = bool(g.get("knockout"))
+        g["enabled"] = bool(g.get("enabled", True))
+        out.append(g)
+    return out
+
+
+def parse_gates_from_form(form) -> list[dict]:
+    """Parse multi-value gate_* fields from a Starlette/FastAPI form.
+
+    Expected fields (repeated rows): gate_id, gate_label, gate_knockout, gate_enabled.
+    Buyer-authored gate_question / gate_answer_type are ignored if present.
     Or JSON blob gate_json. Falls back to defaults when empty.
     """
-    # Prefer structured JSON if present
     raw_json = None
     try:
         raw_json = form.get("gate_json")
@@ -132,31 +279,23 @@ def parse_gates_from_form(form) -> list[dict]:
     if not ids:
         return default_gates()
 
-    labels = form.getlist("gate_label")
-    questions = form.getlist("gate_question")
-    answer_types = form.getlist("gate_answer_type")
-    knockouts = set(form.getlist("gate_knockout"))
-    enableds = set(form.getlist("gate_enabled"))
+    labels = form.getlist("gate_label") if hasattr(form, "getlist") else []
+    knockouts = set(form.getlist("gate_knockout")) if hasattr(form, "getlist") else set()
+    enableds = set(form.getlist("gate_enabled")) if hasattr(form, "getlist") else set()
 
     out = []
     for i, gid in enumerate(ids):
         gid = (gid or "").strip() or f"custom_{i+1}"
         label = (labels[i] if i < len(labels) else gid).strip() or gid
-        question = (questions[i] if i < len(questions) else label).strip() or label
-        at = (answer_types[i] if i < len(answer_types) else "yes_no").strip() or "yes_no"
-        # Checkbox convention: value is the gate id when checked
-        knockout = gid in knockouts or str(i) in knockouts or (knockouts == {"on"} and False)
+        knockout = gid in knockouts or str(i) in knockouts
         enabled = gid in enableds or str(i) in enableds
-        # If enabled list empty but we got ids, treat missing enabled as off when checkboxes used
         if not enableds:
-            # hidden field gate_enabled_flag or assume all listed are enabled
             enabled = True
+        # Deliberately ignore gate_question / gate_answer_type from the form.
         out.append(
             {
                 "id": gid,
                 "label": label,
-                "question": question,
-                "answer_type": at if at in ("yes_no", "text", "document") else "yes_no",
                 "knockout": bool(knockout),
                 "enabled": bool(enabled),
             }
@@ -167,15 +306,13 @@ def parse_gates_from_form(form) -> list[dict]:
 def parse_gates_from_lists(
     ids: list[str],
     labels: list[str] | None = None,
-    questions: list[str] | None = None,
-    answer_types: list[str] | None = None,
+    questions: list[str] | None = None,  # accepted for back-compat; ignored
+    answer_types: list[str] | None = None,  # accepted for back-compat; ignored
     knockout_ids: list[str] | None = None,
     enabled_ids: list[str] | None = None,
 ) -> list[dict]:
-    """Parse parallel form lists (FastAPI Form lists)."""
+    """Parse parallel form lists (FastAPI Form lists). Questions/types ignored."""
     labels = labels or []
-    questions = questions or []
-    answer_types = answer_types or []
     knockout_ids = set(knockout_ids or [])
     enabled_ids = set(enabled_ids or [])
     if not ids:
@@ -184,16 +321,11 @@ def parse_gates_from_lists(
     for i, gid in enumerate(ids):
         gid = (gid or "").strip() or f"custom_{i+1}"
         label = (labels[i] if i < len(labels) else "").strip() or gid
-        question = (questions[i] if i < len(questions) else "").strip() or label
-        at = (answer_types[i] if i < len(answer_types) else "yes_no").strip() or "yes_no"
-        # When enabled_ids provided, only those are on; when empty, all submitted rows are enabled
         enabled = (gid in enabled_ids) if enabled_ids else True
         out.append(
             {
                 "id": gid,
                 "label": label,
-                "question": question,
-                "answer_type": at if at in ("yes_no", "text", "document") else "yes_no",
                 "knockout": gid in knockout_ids,
                 "enabled": enabled,
             }
@@ -208,14 +340,12 @@ def _normalize_gate_list(data: list) -> list[dict]:
             continue
         gid = str(g.get("id") or f"custom_{i+1}")
         label = str(g.get("label") or gid)
-        question = str(g.get("question") or label)
-        at = str(g.get("answer_type") or "yes_no")
+        # Keep optional pre-set question only when it came from our defaults path;
+        # enrich_gates will overwrite from templates / generation anyway.
         out.append(
             {
                 "id": gid,
                 "label": label,
-                "question": question,
-                "answer_type": at if at in ("yes_no", "text", "document") else "yes_no",
                 "knockout": bool(g.get("knockout")),
                 "enabled": bool(g.get("enabled", True)),
             }
@@ -223,9 +353,15 @@ def _normalize_gate_list(data: list) -> list[dict]:
     return out or default_gates()
 
 
-def questionnaire_from_gates(gates: list[dict] | None) -> list[dict]:
-    """Deterministic gate → questionnaire mapping (enabled gates only)."""
-    gates = gates if gates is not None else default_gates()
+def questionnaire_from_gates(
+    gates: list[dict] | None, brief: str | None = None
+) -> list[dict]:
+    """Deterministic check → questionnaire mapping (enabled checks only).
+
+    Always regenerates wording from check id/label + brief so the model (or
+    a stale gate.question) cannot invent a mismatched list.
+    """
+    gates = enrich_gates(gates, brief)
     qs = []
     n = 0
     for g in gates:
@@ -244,25 +380,33 @@ def questionnaire_from_gates(gates: list[dict] | None) -> list[dict]:
     return qs
 
 
-def apply_gates_to_rfx(rfx: dict, gates: list[dict] | None) -> dict:
-    """Replace questionnaire from gates; store quality_gates on the RFx."""
-    gates = gates if gates is not None else default_gates()
+def apply_gates_to_rfx(
+    rfx: dict, gates: list[dict] | None, brief: str | None = None
+) -> dict:
+    """Replace questionnaire from checks; store enriched quality_gates on the RFx."""
+    brief = brief if brief is not None else (rfx.get("brief") if isinstance(rfx, dict) else None)
+    gates = enrich_gates(gates, brief)
     rfx = dict(rfx)
-    rfx["questionnaire"] = questionnaire_from_gates(gates)
-    rfx["quality_gates"] = deepcopy(gates)
+    rfx["questionnaire"] = questionnaire_from_gates(gates, brief)
+    rfx["quality_gates"] = gates
     return rfx
 
 
 def gates_prompt_block(gates: list[dict] | None) -> str:
-    """Text block for the drafter SYSTEM/user content so the model respects gates."""
+    """Text block for the drafter: checks are selected; questionnaire is forced later."""
     gates = [g for g in (gates or default_gates()) if g.get("enabled", True)]
     if not gates:
-        return "Questionnaire: invent 8-12 sensible quality questions; mark 3-4 as knockout."
+        return (
+            "Quality checks: none selected. Still produce a short placeholder questionnaire "
+            "(the system will replace it)."
+        )
     lines = [
-        "Build the questionnaire STRICTLY from these buyer-selected quality gates "
-        "(do not ignore or drop them; you may add at most 2 extra non-knockout clarifying questions):"
+        "The buyer selected these quality checks. Draft scope, 30 lines, and terms as usual. "
+        "Include a minimal questionnaire stub only — the system will REPLACE the questionnaire "
+        "with exactly one question per selected check (knockout flags preserved). "
+        "Do NOT invent extra or different quality questions:",
     ]
     for g in gates:
         ko = "KNOCKOUT" if g.get("knockout") else "preferred/non-knockout"
-        lines.append(f"- [{ko}] {g.get('label')}: {g.get('question')} (answer_type={g.get('answer_type', 'yes_no')})")
+        lines.append(f"- [{ko}] id={g.get('id')} label={g.get('label')}")
     return "\n".join(lines)

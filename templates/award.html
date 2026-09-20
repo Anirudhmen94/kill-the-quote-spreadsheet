@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% from "macros.html" import tip %}
 {% block title %}Award · {{ state.rfx.title }}{% endblock %}
 {% block content %}
 {% set rec = current_rec %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
-    <h1 class="text-2xl font-semibold tracking-tight">Award recommendation</h1>
+    <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">Award recommendation {{ tip("Default strategy: cheapest per line among vendors who cleared knockout quality checks.", aria="Award help", width="w-64") }}</h1>
     <p class="mt-1 text-sm text-slate-600">What you will export and defend. Numbers from the engine, narrative from the analyst, every value traceable to a vendor document.</p>
   </div>
   <div class="flex flex-wrap items-center gap-2">
@@ -12,13 +13,16 @@
     <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
     <a href="/rfx/{{ state.id }}/memo.md" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Memo (.md)</a>
     <form method="post" action="/rfx/{{ state.id }}/award/export-notify" class="inline">
-      <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Export award workbook</button>
+      <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
+        title="Download the award workbook and stub a stakeholder alert into Outbox.">Export award workbook</button>
     </form>
     {% if freeze_pack %}
     <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
-      <button type="submit" class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100">Email award / regret notices</button>
+      <button type="submit" class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100"
+        title="Stub award emails to winners and regret emails to others. Nothing is really sent — see Outbox.">Email award / regret notices</button>
     </form>
-    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50">Download freeze pack (.zip)</a>
+    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
+      title="Zip of locked notices, regrets, memo and workbook tied to the frozen snapshot.">Download freeze pack (.zip)</a>
     {% endif %}
   </div>
 </div>
@@ -79,7 +83,7 @@
             Vendor data version {{ live.vendor_data_version }}
             · Snapshot {{ live.snapshot.id }}
             · {{ live.created_at[:16].replace('T',' ') }} UTC
-            · Strategy: {{ live.strategy }}
+            · Strategy: <span title="Quality-gated = cheapest usable quote per line among vendors who cleared knockouts.">{{ live.strategy }}</span>
           </div>
         </div>
         <span class="text-sm font-semibold tabular-nums">{{ live.total_extended_inr|inr }} / yr · {{ live.covered_line_count }} lines covered</span>
@@ -175,7 +179,10 @@
 
   <aside class="space-y-6">
     <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Freeze award</div>
+      <div class="px-4 py-3 border-b border-slate-200 font-medium inline-flex items-center gap-1.5 w-full">
+        Freeze award
+        {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Later re-reads mark this freeze historical.", aria="Freeze help", width="w-64") }}
+      </div>
       <div class="px-4 py-3 text-xs space-y-2">
         {% if freeze_pack and freeze_pack.status == 'frozen' %}
         <div class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1.5">
@@ -191,8 +198,8 @@
         <p class="text-slate-600">Freezes the quality-gated split. Assumed cells stay out unless you confirm.</p>
         <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2"
               onsubmit="return confirm('Freeze this award pack to the current snapshot? Later vendor edits will mark it historical.')">
-          <label class="flex items-center gap-2"><input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)</label>
-          <button class="rounded bg-slate-900 text-white px-3 py-1.5">Freeze award pack</button>
+          <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this."><input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)</label>
+          <button class="rounded bg-slate-900 text-white px-3 py-1.5" title="Freeze the quality-gated split to this snapshot.">Freeze award pack</button>
         </form>
       </div>
     </div>

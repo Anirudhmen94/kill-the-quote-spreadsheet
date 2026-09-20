@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros.html" import tip %}
 {% block title %}{{ rfx.title }} · RFx{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-start justify-between gap-4">
@@ -8,11 +9,14 @@
   </div>
   <div class="flex items-center gap-2">
     {% if state.outbox %}
-      <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
-      <a href="/rfx/{{ state.id }}/email#inbox" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Go to Email</a>
+      <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+        title="Stubbed outbound messages already queued for this event.">Outbox ({{ state.outbox|length }})</a>
+      <a href="/rfx/{{ state.id }}/email#inbox" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
+        title="Incoming replies — simulate five formats or upload your own, then Read all.">Go to Email</a>
     {% else %}
       <form hx-post="/rfx/{{ state.id }}/send" hx-target="#send-result">
-        <button class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Send to {{ vendors|length }} vendors</button>
+        <button class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
+          title="Stub-sends the RFx to invited vendors and opens Email so you can simulate or upload replies.">Send to {{ vendors|length }} vendors</button>
       </form>
     {% endif %}
   </div>
@@ -64,11 +68,15 @@
     
     {% if rfx.quality_gates %}
     <div class="rounded-lg border border-slate-200 bg-white mb-4">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Quality gates that drove this questionnaire</div>
+      <div class="px-4 py-3 border-b border-slate-200 font-medium inline-flex items-center gap-1.5 w-full">
+        Quality checks that drove this questionnaire
+        {{ tip("Read-only chips of the checks you selected on Home. Each one produced a questionnaire item below.", aria="Gates chips help", width="w-60") }}
+      </div>
       <div class="px-4 py-3 flex flex-wrap gap-1.5">
         {% for g in rfx.quality_gates if g.enabled %}
         <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs
-          {% if g.knockout %}bg-amber-50 text-amber-900 border-amber-200{% else %}bg-slate-50 text-slate-700 border-slate-200{% endif %}">
+          {% if g.knockout %}bg-amber-50 text-amber-900 border-amber-200{% else %}bg-slate-50 text-slate-700 border-slate-200{% endif %}"
+          title="{% if g.knockout %}Knockout check — a No fails the vendor.{% else %}Preferred / non-knockout check.{% endif %}">
           {{ g.label }}{% if g.knockout %}<span class="font-medium">· knockout</span>{% endif %}
         </span>
         {% endfor %}
@@ -84,7 +92,7 @@
           <span class="text-slate-400 shrink-0 w-7">{{ q.q_id }}</span>
           <span>{{ q.text }}
             <span class="ml-1 text-xs text-slate-500">[{{ q.answer_type.replace('_','/') }}]</span>
-            {% if q.knockout %}<span class="ml-1 inline-flex rounded bg-amber-100 text-amber-800 px-1.5 text-xs">knockout</span>{% endif %}
+            {% if q.knockout %}<span class="ml-1 inline-flex rounded bg-amber-100 text-amber-800 px-1.5 text-xs" title="Knockout — a No or missing evidence fails this vendor on the quality gate.">knockout</span>{% endif %}
           </span>
         </li>
         {% endfor %}

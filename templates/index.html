@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros.html" import tip %}
 {% block content %}
 <div class="grid lg:grid-cols-5 gap-8">
   <section class="lg:col-span-3">
@@ -9,38 +10,47 @@
     </p>
 
     <form hx-post="/draft" hx-target="#draft-result" hx-indicator="#draft-busy" hx-disabled-elt="#draft-btn" class="mt-6 space-y-3">
-      <textarea id="brief-input" name="brief" rows="9" required minlength="20"
-        class="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm shadow-sm focus:border-slate-900 focus:ring-0"
-        placeholder="e.g. We run a snacks plant in Pune and need about 30 sizes of corrugated shippers and trays for the next year...">{{ example_brief }}</textarea>
-      
+      <label class="block">
+        <span class="inline-flex items-center gap-1.5 text-sm font-medium text-slate-800">
+          Brief
+          {{ tip("Plain-language requirement. Plant, volumes, board grades, delivery and must-haves are enough — the co-pilot turns this into a full RFx.", aria="About the brief", width="w-64") }}
+        </span>
+        <textarea id="brief-input" name="brief" rows="9" required minlength="20"
+          class="mt-1 w-full rounded-lg border border-slate-300 bg-white p-3 text-sm shadow-sm focus:border-slate-900 focus:ring-0"
+          placeholder="e.g. We run a snacks plant in Pune and need about 30 sizes of corrugated shippers and trays for the next year..."
+          title="Describe the buy in plain language: plant, SKUs, grades, delivery, must-haves.">{{ example_brief }}</textarea>
+      </label>
+
       <div class="rounded-lg border border-slate-200 bg-white p-4" id="gates-builder">
         <div class="flex items-center justify-between gap-2">
           <div>
-            <div class="text-sm font-medium">Quality gates</div>
-            <p class="text-xs text-slate-500 mt-0.5">These become the RFx questionnaire. Knockout gates → knockout questions. Defaults fit corrugated India / snacks-plant buying.</p>
+            <div class="inline-flex items-center gap-1.5 text-sm font-medium">
+              Quality checks
+              {{ tip("Tick On to include a check. KO = knockout: a vendor No (or missing evidence) fails the gate. Questions are auto-written from each short label when you draft.", aria="About quality checks", width="w-64") }}
+            </div>
+            <p class="text-xs text-slate-500 mt-0.5">Selected checks become the RFx questionnaire automatically. Add a short label only — you do not write the question.</p>
           </div>
-          <button type="button" id="gate-add" class="text-xs rounded border border-slate-300 px-2 py-1 hover:bg-slate-50">Add gate</button>
+          <button type="button" id="gate-add" class="inline-flex items-center gap-1 text-xs rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+            title="Add a custom quality check by short label (e.g. Fire safety cert).">
+            Add check
+            {{ tip("Add a custom check with a short label only (e.g. “Fire safety cert”). The system writes the question and picks yes/no or document.", aria="Add check help", width="w-60") }}
+          </button>
         </div>
         <ul id="gates-list" class="mt-3 space-y-2">
           {% for g in default_gates %}
-          <li class="grid grid-cols-12 gap-2 items-start text-xs border border-slate-100 rounded-md p-2 bg-slate-50/50 gate-row" data-id="{{ g.id }}">
+          <li class="grid grid-cols-12 gap-2 items-center text-xs border border-slate-100 rounded-md p-2 bg-slate-50/50 gate-row" data-id="{{ g.id }}">
             <input type="hidden" name="gate_id" value="{{ g.id }}">
-            <label class="col-span-1 flex flex-col items-center gap-1 pt-1">
-              <span class="text-[10px] text-slate-500">On</span>
+            <label class="col-span-1 flex flex-col items-center gap-1" title="Include this check in the questionnaire">
+              <span class="inline-flex items-center gap-0.5 text-[10px] text-slate-500">On {{ tip("Include this check when drafting. Off = skipped.", aria="On checkbox") }}</span>
               <input type="checkbox" name="gate_enabled" value="{{ g.id }}" {% if g.enabled %}checked{% endif %}>
             </label>
-            <label class="col-span-1 flex flex-col items-center gap-1 pt-1">
-              <span class="text-[10px] text-slate-500">KO</span>
+            <label class="col-span-1 flex flex-col items-center gap-1" title="Knockout: failing this check disqualifies the vendor">
+              <span class="inline-flex items-center gap-0.5 text-[10px] text-slate-500">KO {{ tip("Knockout. A No or missing evidence fails the vendor on this gate.", aria="Knockout toggle") }}</span>
               <input type="checkbox" name="gate_knockout" value="{{ g.id }}" {% if g.knockout %}checked{% endif %}>
             </label>
-            <div class="col-span-10 space-y-1">
-              <input name="gate_label" value="{{ g.label }}" class="w-full rounded border border-slate-300 px-2 py-1 font-medium" placeholder="Gate label">
-              <input name="gate_question" value="{{ g.question }}" class="w-full rounded border border-slate-300 px-2 py-1" placeholder="Questionnaire text">
-              <select name="gate_answer_type" class="rounded border border-slate-300 px-2 py-1">
-                <option value="yes_no" {% if g.answer_type=='yes_no' %}selected{% endif %}>yes/no</option>
-                <option value="document" {% if g.answer_type=='document' %}selected{% endif %}>document</option>
-                <option value="text" {% if g.answer_type=='text' %}selected{% endif %}>text</option>
-              </select>
+            <div class="col-span-10">
+              <input type="hidden" name="gate_label" value="{{ g.label }}">
+              <div class="font-medium text-slate-800 px-1">{{ g.label }}</div>
             </div>
           </li>
           {% endfor %}
@@ -49,10 +59,13 @@
 
       <div class="flex flex-wrap items-center gap-3">
         <button id="draft-btn" type="submit" {% if not ai_ok %}disabled{% endif %}
-          class="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">
+          class="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Draft scope, 30 line items, terms, and a questionnaire built from your selected checks.">
           Draft the RFx
         </button>
-        <span id="draft-hint" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">Uses cached Chakan RFx (instant)</span>
+        {{ tip("Uses the cached Chakan RFx when the brief is unchanged (instant). Edit the brief or checks → live AI draft; questionnaire always rebuilt from selected checks.", aria="Draft path help", width="w-64") }}
+        <span id="draft-hint" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
+          title="Unchanged Chakan example brief uses a canned RFx (instant). Any edit runs a live AI draft.">Uses cached Chakan RFx (instant)</span>
         <span id="draft-busy" class="htmx-indicator items-center gap-2 text-sm text-slate-600">
           <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
           <span id="draft-busy-text">Drafting…</span>
@@ -92,7 +105,7 @@
           </div>
         </div>
         <form method="post" action="/rfx/{{ e.id }}/delete" onsubmit="return confirm('Delete this sourcing event and all its files?')">
-          <button class="text-xs text-slate-400 hover:text-rose-600">Delete</button>
+          <button class="text-xs text-slate-400 hover:text-rose-600" title="Delete this sourcing event">Delete</button>
         </form>
       </li>
       {% endfor %}
@@ -118,6 +131,9 @@
     const cached = norm(ta.value) === norm(example);
     if (hint) {
       hint.textContent = cached ? 'Uses cached Chakan RFx (instant)' : 'Live AI draft (fast Haiku model)';
+      hint.title = cached
+        ? 'Unchanged Chakan example brief uses a canned RFx (instant). Questionnaire still rebuilt from your selected checks.'
+        : 'Brief differs from the example — live AI drafts scope, lines and terms. Questionnaire is forced from your selected checks.';
       hint.className = cached
         ? 'text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5'
         : 'text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5';
@@ -125,7 +141,6 @@
     if (busyText) busyText.textContent = cached
       ? 'Loading cached Chakan RFx…'
       : 'Drafting 30 line items with the fast model. Usually under 20 seconds.';
-    // Cached path does not need an API key; live draft does.
     if (btn) {
       const aiOk = {{ 'true' if ai_ok else 'false' }};
       btn.disabled = !(cached || aiOk);
@@ -137,7 +152,7 @@
   }
 })();
 
-  // Quality-gate builder: add / remove rows
+  // Quality-check builder: add short-label rows only (no question / answer-type fields)
   (function(){
     const list = document.getElementById('gates-list');
     const addBtn = document.getElementById('gate-add');
@@ -147,32 +162,26 @@
       n += 1;
       const id = 'custom_' + Date.now() + '_' + n;
       const li = document.createElement('li');
-      li.className = 'grid grid-cols-12 gap-2 items-start text-xs border border-slate-100 rounded-md p-2 bg-slate-50/50 gate-row';
+      li.className = 'grid grid-cols-12 gap-2 items-center text-xs border border-slate-100 rounded-md p-2 bg-slate-50/50 gate-row';
       li.dataset.id = id;
       li.innerHTML = `
         <input type="hidden" name="gate_id" value="${id}">
-        <label class="col-span-1 flex flex-col items-center gap-1 pt-1">
+        <label class="col-span-1 flex flex-col items-center gap-1" title="Include this check in the questionnaire">
           <span class="text-[10px] text-slate-500">On</span>
           <input type="checkbox" name="gate_enabled" value="${id}" checked>
         </label>
-        <label class="col-span-1 flex flex-col items-center gap-1 pt-1">
+        <label class="col-span-1 flex flex-col items-center gap-1" title="Knockout: failing this check disqualifies the vendor">
           <span class="text-[10px] text-slate-500">KO</span>
-          <input type="checkbox" name="gate_knockout" value="${id}" checked>
+          <input type="checkbox" name="gate_knockout" value="${id}">
         </label>
-        <div class="col-span-10 space-y-1">
-          <div class="flex gap-1">
-            <input name="gate_label" value="Custom gate ${n}" class="w-full rounded border border-slate-300 px-2 py-1 font-medium" placeholder="Gate label">
-            <button type="button" class="gate-remove rounded border border-slate-300 px-2 hover:bg-rose-50 text-rose-700">✕</button>
-          </div>
-          <input name="gate_question" value="" class="w-full rounded border border-slate-300 px-2 py-1" placeholder="Questionnaire text">
-          <select name="gate_answer_type" class="rounded border border-slate-300 px-2 py-1">
-            <option value="yes_no" selected>yes/no</option>
-            <option value="document">document</option>
-            <option value="text">text</option>
-          </select>
+        <div class="col-span-10 flex gap-1 items-center">
+          <input name="gate_label" value="" class="w-full rounded border border-slate-300 px-2 py-1 font-medium" placeholder="Short label (e.g. Fire safety cert)" title="Short label only — the system writes the question when you draft.">
+          <button type="button" class="gate-remove rounded border border-slate-300 px-2 hover:bg-rose-50 text-rose-700" title="Remove this check">✕</button>
         </div>`;
       list.appendChild(li);
       li.querySelector('.gate-remove').addEventListener('click', () => li.remove());
+      const input = li.querySelector('input[name=gate_label]');
+      if (input) input.focus();
     });
   })();
 

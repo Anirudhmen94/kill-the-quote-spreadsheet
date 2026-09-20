@@ -66,7 +66,7 @@ async def draft(request: Request):
         rfx = rfx_drafter.draft_rfx(brief, log=log, gates=gates)
         state = rfx_drafter.new_state(brief, rfx)
         state["ai_log"] = log
-        state["quality_gates"] = gates
+        state["quality_gates"] = rfx.get("quality_gates") or draft_gates.enrich_gates(gates, brief)
         storage.save_state(state["id"], state)
     except llm.AINotConfigured as e:
         return error_fragment(str(e), 400)

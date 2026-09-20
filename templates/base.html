@@ -1,3 +1,4 @@
+{% from "macros.html" import tip %}
 <!DOCTYPE html>
 <html lang="en" class="h-full bg-slate-50">
 <head>
@@ -83,9 +84,16 @@
       </a>
       {% if rfx_id %}
       <nav class="flex items-center gap-1 text-xs sm:text-sm overflow-x-auto">
-        {% set steps = [('rfx','RFx'),('email','Email'),('compare','Compare'),('exceptions','Exceptions'),('award','Award')] %}
-        {% for key, label in steps %}
+        {% set steps = [
+          ('rfx','RFx','The drafted request: scope, lines, terms, questionnaire. Send from here.'),
+          ('email','Email','Incoming vendor replies and stubbed outbound mail (RFx, clarifications, notices).'),
+          ('compare','Compare','Side-by-side prices in INR/pc with evidence. Gate Pass/Partial/Fail lives here.'),
+          ('exceptions','Exceptions','Messy cells and gate fails that block a clean award — override or get approval.'),
+          ('award','Award','Quality-gated recommendation, freeze pack, notices and export.')
+        ] %}
+        {% for key, label, tiptext in steps %}
           <a href="/rfx/{{ rfx_id }}/{{ key }}"
+             title="{{ tiptext }}"
              class="px-2.5 py-1.5 rounded-md whitespace-nowrap {% if active == key %}bg-slate-900 text-white{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
             {{ label }}
           </a>

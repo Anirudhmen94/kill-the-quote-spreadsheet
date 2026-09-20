@@ -6,7 +6,7 @@
   {% endif %}
   {% if draft.points and outbox_id %}
   <div class="rounded border border-sky-200 bg-sky-50 text-sky-900 p-3 text-xs">
-    Drafted by the model from {{ draft.points|length }} open points. Edit the subject and body below, then <strong>Save</strong> to keep changes in the outbox draft, or <strong>Send (stub)</strong> to mark delivery stubbed with the current text.
+    <span title="Auto-drafted clarification from open gaps in this vendor's reply.">Drafted by the model from</span> {{ draft.points|length }} open points. Edit the subject and body below, then <strong>Save</strong> to keep changes in the outbox draft, or <strong>Send (stub)</strong> to mark delivery stubbed with the current text.
     {% if draft.delivery == 'draft' %}
     <span class="ml-1 rounded bg-amber-100 text-amber-900 px-1.5 py-0.5">Draft — not sent</span>
     {% elif draft.delivery %}
@@ -34,12 +34,14 @@
               hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify/save"
               hx-include="#clarify-form-{{ outbox_id }}"
               hx-target="#drawer-root"
-              class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50">Save</button>
+              class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+              title="Keep your edits on this clarification draft in the outbox (not sent).">Save</button>
       <button type="button"
               hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify/send"
               hx-include="#clarify-form-{{ outbox_id }}"
               hx-target="#drawer-root"
-              class="rounded bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800">Send (stub)</button>
+              class="rounded bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800"
+              title="Mark delivery stubbed with the current text. No real email is sent.">Send (stub)</button>
       <a href="/rfx/{{ state.id }}/email#outbox" class="text-xs underline text-slate-500 ml-auto">View outbox</a>
     </div>
     {% else %}
