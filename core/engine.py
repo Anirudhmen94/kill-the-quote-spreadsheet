@@ -243,6 +243,15 @@ def commercial_summary(ext: dict | None) -> dict:
 # The comparison
 # ---------------------------------------------------------------------------
 
+def _empty_cell(status: str, reason: str) -> dict:
+    """A cell with every key the templates expect, for lines a vendor did not price."""
+    return {
+        "unit_inr": None, "raw_price": None, "currency": None, "basis": None, "basis_qty": None,
+        "status": status, "flags": [], "conversion": "", "confidence": None, "reason": reason,
+        "evidence": None, "vendor_description": "", "vendor_item_ref": "", "candidates": [], "quote_index": None,
+    }
+
+
 def build_comparison(state: dict) -> dict:
     rfx = state["rfx"]
     fx = state["fx"]
@@ -254,7 +263,7 @@ def build_comparison(state: dict) -> dict:
         for v in vendors:
             ext = v.get("extraction")
             if not ext:
-                cells[v["vendor_id"]] = {"status": "not_extracted", "unit_inr": None, "flags": [], "evidence": None, "conversion": "", "reason": ""}
+                cells[v["vendor_id"]] = _empty_cell("not_extracted", "")
                 continue
             hint = vendor_currency_hint(ext)
             matches = [(i, q) for i, q in enumerate(ext.get("line_quotes", [])) if q.get("line_no") == li["line_no"]]
@@ -269,7 +278,7 @@ def build_comparison(state: dict) -> dict:
                     cell["unit_inr"] = None
                     cell["quote_index"] = i
                 else:
-                    cell = {"status": "missing", "unit_inr": None, "flags": [], "evidence": None, "conversion": "", "reason": "Not quoted", "quote_index": None}
+                    cell = _empty_cell("missing", "Not quoted")
             else:
                 # Prefer the best-status match; if several map to the same line, flag it.
                 matches.sort(key=lambda iq: SEVERITY.get(iq[1].get("status", "needs_review"), 3))
