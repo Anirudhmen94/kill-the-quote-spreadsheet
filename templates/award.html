@@ -8,9 +8,9 @@
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
       Award
-      {{ tip("Suggest top 2 Pass vendors, assign by line, tick checks, then send award drafts and regrets.", aria="Award help", width="w-64") }}
+      {{ tip("Ask → Send award to vendor preloads assignment · shortlist · assign · checks · send drafts (manager notified).", aria="Award help", width="w-72") }}
     </h1>
-    <p class="mt-1 text-sm text-slate-600">Ask the analyst · shortlist top 2 · assign by line · check · send drafts.</p>
+    <p class="mt-1 text-sm text-slate-600">Ask the analyst · Send award to vendor · shortlist · assign · check · send drafts.</p>
     <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
   </div>
 </div>
@@ -48,6 +48,29 @@
 </div>
 {% endif %}
 
+
+{# Analyst suggestion preload from Compare/Award Ask #}
+{% set from_ask = award_from_ask if award_from_ask is defined else (state.award_from_ask if state.award_from_ask is defined else none) %}
+{% if from_ask and from_ask.reason %}
+<div class="mt-4 rounded-xl border-2 border-sky-400 bg-sky-50 px-5 py-4 text-sky-950 shadow-sm" data-testid="award-from-ask-banner" id="award-from-ask">
+  <div class="flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-sky-800/80">Analyst suggestion</h2>
+      <p class="mt-1 text-base font-medium">
+        Preloaded <strong>{{ from_ask.vendor_name }}</strong>
+        {% if from_ask.line_nos %} on {{ from_ask.line_nos|length }} line(s){% endif %}
+        {% if from_ask.split %} (suggested split){% endif %}.
+      </p>
+      <p class="mt-2 text-sm leading-relaxed" data-testid="award-from-ask-reason">{{ from_ask.reason }}</p>
+      {% if from_ask.question %}
+      <p class="mt-2 text-xs text-sky-800/70">From: {{ from_ask.question }}</p>
+      {% endif %}
+    </div>
+    <a href="#send-award" class="shrink-0 rounded-lg bg-sky-700 text-white px-3 py-1.5 text-xs font-medium hover:bg-sky-800">Review &amp; send ↓</a>
+  </div>
+</div>
+{% endif %}
+
 {# Confirmation dialog after send #}
 {% if confirmation %}
 <div class="mt-4 rounded-xl border-2 border-emerald-500 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" data-testid="award-send-confirmation" role="dialog" aria-labelledby="award-confirm-heading">
@@ -55,6 +78,10 @@
   <p class="mt-1 text-sm">
     Award drafts sent to <strong>{{ confirmation.award_count or (confirmation.award_vendors|length) }}</strong>
     · regret notices to <strong>{{ confirmation.regret_count or (confirmation.regret_vendors|length) }}</strong>.
+    {% if confirmation.manager_notified %}
+    <span data-testid="award-manager-notified"> Manager notified</span>
+    {% if confirmation.manager_roles %} ({{ confirmation.manager_roles|join(', ') }}){% endif %}.
+    {% endif %}
   </p>
   <div class="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
     <div>
@@ -89,7 +116,7 @@
     <div class="rounded-xl border-2 border-slate-900/10 bg-gradient-to-b from-slate-50 to-white shadow-sm overflow-hidden" data-testid="award-ask-card">
       <div class="px-5 py-4 border-b border-slate-200">
         <h2 id="award-ask-heading" class="text-lg font-semibold text-slate-900">Ask the analyst</h2>
-        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant; free-ask calls the live analyst. Use <strong>Apply this vendor</strong> to set the draft assignment — then Send below.</p>
+        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant; free-ask calls the live analyst. Use <strong>Send award to vendor</strong> to preload Award with that vendor and reason, then tick checks and Send. <strong>Apply this vendor</strong> is a lighter assignment-only action.</p>
       </div>
 
       <div class="px-5 py-4 space-y-4">
@@ -161,9 +188,9 @@
       {% if shortlist and shortlist.vendors %}
       <div class="divide-y divide-slate-100">
         {% for v in shortlist.vendors %}
-        <div class="px-4 py-3" data-testid="award-shortlist-{{ v.vendor_id }}">
+        <div class="px-4 py-3 {% if shortlist.focused_vendor_id and v.vendor_id == shortlist.focused_vendor_id %}bg-sky-50/80 ring-1 ring-inset ring-sky-200{% endif %}" data-testid="award-shortlist-{{ v.vendor_id }}">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <div class="font-medium text-slate-900">{{ loop.index }}. {{ v.name }}</div>
+            <div class="font-medium text-slate-900">{{ loop.index }}. {{ v.name }}{% if shortlist.focused_vendor_id and v.vendor_id == shortlist.focused_vendor_id %} <span class="ml-1 text-xs font-normal text-sky-800">(analyst pick)</span>{% endif %}</div>
             <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 text-xs">Pass</span>
           </div>
           <ul class="mt-2 text-xs text-slate-600 space-y-0.5 list-disc pl-4">
@@ -293,4 +320,18 @@
 
   {% include "partials/audit_trust_strip.html" %}
 </div>
+
+<script>
+(function(){
+  var hash = (location.hash || '').replace('#','');
+  if (hash === 'send-award') {
+    var el = document.getElementById('send-award');
+    if (el) {
+      setTimeout(function(){ el.scrollIntoView({behavior:'smooth', block:'center'}); }, 50);
+      var btn = document.getElementById('award-send-btn');
+      if (btn) { try { btn.focus(); } catch (e) {} }
+    }
+  }
+})();
+</script>
 {% endblock %}

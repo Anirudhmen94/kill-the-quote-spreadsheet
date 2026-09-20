@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from . import award_draft, engine, freeze
 
 DEFAULT_STAKEHOLDERS = [
+    {"role": "Manager", "email": "manager@buyer.example"},
     {"role": "Category lead", "email": "category.lead@buyer.example"},
     {"role": "Finance", "email": "finance@buyer.example"},
     {"role": "Plant buyer", "email": "plant.buyer@buyer.example"},
@@ -112,6 +113,7 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
             if e.get("kind") in ("regret", "regret_notice")
         }
     )
+    stake_list = stakeholders(state)
     confirmation = {
         "award_count": len(award_vendors),
         "regret_count": len(regret_vendors),
@@ -119,6 +121,9 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
         "regret_vendors": regret_vendors,
         "total_extended_inr": totals.get("total_extended_inr"),
         "covered_line_count": totals.get("covered_line_count"),
+        "manager_notified": True,
+        "manager_roles": [s.get("role") for s in stake_list],
+        "manager_emails": [s.get("email") for s in stake_list],
     }
     award_draft.mark_sent(state, confirmation)
 
@@ -136,6 +141,7 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
     flash = (
         f"Award drafts sent to {len(award_vendors)} vendor(s); "
         f"regret notices to {len(regret_vendors)}. "
+        f"Manager notified ({len(stake_entries)} stakeholder alert(s)). "
         f"View Outbox."
     )
     push_flash(
@@ -225,10 +231,12 @@ def _send_from_freeze(state: dict, vendor_id: str | None = None) -> dict:
         "regret_count": regret_count,
         "award_vendors": award_vendors,
         "regret_vendors": regret_vendors,
+        "manager_notified": True,
+        "manager_roles": [s.get("role") for s in stakeholders(state)],
     }
     flash = (
         f"Successfully stub-sent {award_count} award notice(s) and {regret_count} regret notice(s) "
-        f"to Outbox (no real SMTP). View Outbox."
+        f"to Outbox (no real SMTP). Manager notified. View Outbox."
     )
     push_flash(
         state,

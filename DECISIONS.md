@@ -19,8 +19,8 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 | **Compare vs Anomalies split** | Full multi-vendor matrix stays separate from exception workflows. | `/rfx/<id>/compare` (all vendors, all cell statuses) · `/rfx/<id>/anomalies` (flags + Override / Send for approval / Deny) |
 | **Award = Ask → top 2 → assign → checks → Send** | One simple buyer close path; Ask stays strong after Compare. | `/rfx/<id>/award`: Ask → Suggest top 2 → Assign by line → Rule checks → **Send award drafts** → confirmation → Export Excel |
 | **Premade Ask = fast cache; free-ask = live Claude** | Demo speed ≠ Email Read-all latency; typed questions stay real. | Award Ask: 3 premade buttons (instant) · textarea (live API) |
-| **Ask Apply updates draft, does not lock/send** | Buyer stays in control of Send. | Award Ask answers: **Apply this vendor** / Apply suggested split |
-| **Award draft + notices, not freeze/lock UX** | Freeze/lock lifecycle was over-engineered for the buyer. Core freeze code may remain for tests/back-compat; Award page does not expose it. | Award Send → Outbox award + regret stubs · status **Award drafts sent** |
+| **Ask → Send award to vendor preloads Award** | Buyer goes from analyst suggestion straight into Award send path. | Compare/Award Ask: **Send award to vendor** → Award with vendor + reason banner · **Apply this vendor** remains lighter |
+| **Award draft + notices, not freeze/lock UX** | Freeze/lock lifecycle was over-engineered for the buyer. Core freeze code may remain for tests/back-compat; Award page does not expose it. | Award Send → Outbox award + regret stubs · **manager/stakeholder notified** · status **Award drafts sent** |
 | **Email channel, stub SMTP** | Brief allows fake mail; Outbox is the proof. | `/rfx/<id>/email` Incoming + Outbox · award/regret stubs after Send |
 | **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare cell-status / gate / vendor filters · Anomalies kind filters (Award: none) |
 
@@ -32,7 +32,7 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 2. **Email** — simulate messy replies, live parallel extract, clarifications, Outbox.  
 3. **Compare** — full multi-vendor INR/pc matrix (all statuses + gate badges), evidence drawer (read/link to Anomalies), Ask drawer, filters.  
 3b. **Anomalies** — flagged cells, gate Fail/Partial, coverage gaps, format/pricing callouts; Override / Send for approval / Deny.  
-4. **Award** — Ask the analyst (premade + live) with **Apply this vendor**; Suggest top 2 Pass vendors; Assign by line; rule checkmarks; **Send award drafts** (+ regrets); confirmation dialog; Export Excel.  
+4. **Award** — Ask the analyst (premade + live) with **Send award to vendor** (preload + reason) and lighter **Apply this vendor**; Suggest top 2 Pass vendors; Assign by line; rule checkmarks; **Send award drafts** (+ regrets + manager notify); confirmation dialog; Export Excel.  
 5. **Trust chrome** — cell states, vendor data version / snapshots, audit strip.  
 6. **Charts / exports / audit** — Compare allocation & coverage bars; award workbook with line→vendor sheet + non-awarded summary.
 

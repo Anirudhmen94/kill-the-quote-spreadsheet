@@ -202,6 +202,15 @@ def award_page(request: Request, rfx_id: str):
 
     draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
     shortlist = award_draft.suggest_top2(state, live if live.get("available") else None) if live.get("available") else {"vendors": [], "explanation": "", "enough": False}
+    from_ask = state.get("award_from_ask") if isinstance(state.get("award_from_ask"), dict) else None
+    # Focus shortlist on analyst-suggested vendor when present
+    if from_ask and from_ask.get("vendor_id") and shortlist.get("vendors"):
+        vid = from_ask["vendor_id"]
+        ordered = sorted(
+            shortlist["vendors"],
+            key=lambda v: (0 if v.get("vendor_id") == vid else 1, v.get("name") or ""),
+        )
+        shortlist = {**shortlist, "vendors": ordered, "focused_vendor_id": vid}
     assignment_rows = award_draft.line_assignment_rows(state, live if live.get("available") else None) if live.get("available") else []
     totals = award_draft.draft_totals(state, live if live.get("available") else None) if live.get("available") else {"total_extended_inr": 0, "covered_line_count": 0, "uncovered_lines": []}
     checklist_ready = award_draft.checklist_complete(draft) if draft else False
@@ -223,6 +232,7 @@ def award_page(request: Request, rfx_id: str):
         checklist_ready=checklist_ready,
         audit_strip=audit_strip,
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
+        award_from_ask=from_ask,
     )
 
 
@@ -319,7 +329,7 @@ async def award_use_and_lock(request: Request, rfx_id: str, idx: int):
     state = load_or_404(rfx_id)
     award_actions.push_flash(
         state,
-        "Lock / Use & lock was removed. Use Apply this vendor on Ask answers, then Send award drafts.",
+        "Lock / Use & lock was removed. Use Send award to vendor on Ask answers, then Send award drafts.",
         level="error",
     )
     storage.save_state(rfx_id, state)
@@ -443,6 +453,103 @@ async def award_apply_split(request: Request, rfx_id: str, chat_idx: int = Form(
     if request.headers.get("HX-Request"):
         return hx_redirect(f"/rfx/{rfx_id}/award#assign-by-line")
     return RedirectResponse(f"/rfx/{rfx_id}/award#assign-by-line", status_code=303)
+
+
+
+@router.post("/rfx/{rfx_id}/award/send-to-vendor", response_class=HTMLResponse)
+async def award_send_to_vendor(request: Request, rfx_id: str):
+    """From Ask: preload Award with suggested vendor + reason, focus Send section.
+
+    Does not send notices yet — buyer reviews checks then uses Send award drafts.
+    """
+    from core import award_draft
+
+    state = load_or_404(rfx_id)
+    form = await request.form()
+    vendor_id = (form.get("vendor_id") or "").strip()
+    line_nos_raw = (form.get("line_nos") or "").strip()
+    reason = (form.get("reason") or "").strip()
+    question = (form.get("question") or "").strip()
+    chat_idx_raw = form.get("chat_idx")
+    apply_split = (form.get("apply_split") or "").strip().lower() in ("1", "true", "yes")
+
+    lines: list[int] = []
+    for part in line_nos_raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            lines.append(int(part))
+
+    chat_idx = None
+    try:
+        if chat_idx_raw is not None and str(chat_idx_raw).strip() != "":
+            chat_idx = int(chat_idx_raw)
+    except (TypeError, ValueError):
+        chat_idx = None
+
+    chat = state.get("chat") or []
+    msg = chat[chat_idx] if chat_idx is not None and 0 <= chat_idx < len(chat) else None
+    if msg and not reason:
+        if vendor_id:
+            name = next((v["name"] for v in state.get("vendors") or [] if v["vendor_id"] == vendor_id), None)
+            reason = award_draft.analyst_reason_snippet(msg, name)
+        else:
+            reason = award_draft.analyst_reason_snippet(msg)
+    if msg and not question:
+        question = msg.get("question") or ""
+
+    dest = f"/rfx/{rfx_id}/award#send-award"
+    try:
+        if apply_split:
+            allocation = None
+            if msg:
+                allocation = (msg.get("apply_all_split") or {}).get("allocation")
+            if not allocation:
+                live = snapshots.live_award_calculation(state)
+                top = award_draft.suggest_top2(state, live)
+                allocation = award_draft.default_allocation(
+                    state, live, shortlist_ids=top["shortlist_ids"]
+                )
+            out = award_draft.preload_split_from_analyst(
+                state,
+                allocation,
+                reason=reason,
+                question=question,
+                chat_idx=chat_idx,
+            )
+            n_vendors = len({str(v) for v in allocation.values()})
+            award_actions.push_flash(
+                state,
+                f"Preloaded suggested split ({n_vendors} vendor(s)). Review checks, then Send award drafts.",
+                cta_href=dest,
+                cta_label="Review & send",
+            )
+        else:
+            if not vendor_id:
+                raise ValueError("Pick a vendor to send an award to.")
+            out = award_draft.preload_from_analyst(
+                state,
+                vendor_id,
+                line_nos=lines or None,
+                reason=reason,
+                question=question,
+                chat_idx=chat_idx,
+            )
+            n = len(out["apply"]["applied_lines"])
+            name = out["apply"]["vendor_name"]
+            award_actions.push_flash(
+                state,
+                f"Preloaded {name} on {n} line(s) from the analyst suggestion. "
+                f"Review checks, then Send award drafts.",
+                cta_href=dest,
+                cta_label="Review & send",
+            )
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+        dest = f"/rfx/{rfx_id}/award"
+    storage.save_state(rfx_id, state)
+    if request.headers.get("HX-Request"):
+        return hx_redirect(dest)
+    return RedirectResponse(dest, status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/award/send-notices", response_class=HTMLResponse)

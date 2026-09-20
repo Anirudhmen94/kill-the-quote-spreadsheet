@@ -74,12 +74,35 @@
         <form hx-post="/rfx/{{ state.id }}/ask/rerun/{{ idx }}" hx-target="#chat" hx-swap="beforeend" hx-indicator="#ask-busy">
           <button class="rounded border border-sky-300 bg-sky-50 text-sky-900 px-2.5 py-1 font-medium hover:bg-sky-100">Rerun with latest data</button>
         </form>
-        <button disabled title="This answer was generated before the latest vendor data was processed. Rerun the question before saving it as an award recommendation."
-          class="rounded border border-slate-200 bg-slate-100 text-slate-400 px-2.5 py-1 font-medium cursor-not-allowed">Save as award recommendation</button>
-        {% else %}
-        <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}" hx-target="#chat-error">
-          <button class="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 px-2.5 py-1 font-medium hover:bg-emerald-100">Save as award recommendation</button>
-        </form>
+        <button disabled title="Rerun with latest data before sending an award to a vendor."
+          class="rounded border border-slate-200 bg-slate-100 text-slate-400 px-2.5 py-1 font-medium cursor-not-allowed">Send award to vendor</button>
+        {% elif m.status != 'failed' %}
+          {% if m.apply_all_split %}
+          <form method="post" action="/rfx/{{ state.id }}/award/send-to-vendor"
+            hx-post="/rfx/{{ state.id }}/award/send-to-vendor" hx-target="body" hx-swap="none">
+            <input type="hidden" name="apply_split" value="1">
+            <input type="hidden" name="chat_idx" value="{{ idx }}">
+            <button type="submit"
+              class="rounded border border-emerald-600 bg-emerald-50 text-emerald-950 px-2.5 py-1 font-medium hover:bg-emerald-100"
+              data-testid="compare-ask-send-split"
+              title="Opens Award with this split preloaded — does not send yet.">{{ m.apply_all_split.send_label or 'Send awards from this split' }}</button>
+          </form>
+          {% endif %}
+          {% for action in m.apply_actions or [] %}
+          <form method="post" action="/rfx/{{ state.id }}/award/send-to-vendor"
+            hx-post="/rfx/{{ state.id }}/award/send-to-vendor" hx-target="body" hx-swap="none">
+            <input type="hidden" name="vendor_id" value="{{ action.vendor_id }}">
+            <input type="hidden" name="line_nos" value="{{ action.line_nos|join(',') }}">
+            <input type="hidden" name="chat_idx" value="{{ idx }}">
+            <button type="submit"
+              class="rounded border border-emerald-600 bg-emerald-50 text-emerald-950 px-2.5 py-1 font-medium hover:bg-emerald-100"
+              data-testid="compare-ask-send-award"
+              title="Opens Award with {{ action.vendor_name }} preloaded — does not send yet.">{{ action.send_label or ('Send award to ' ~ action.vendor_name) }}</button>
+          </form>
+          {% endfor %}
+          {% if not m.apply_actions and not m.apply_all_split %}
+          <span class="text-[11px] text-slate-400">Ask about a Pass vendor or line to enable Send award.</span>
+          {% endif %}
         {% endif %}
       </span>
     </div>

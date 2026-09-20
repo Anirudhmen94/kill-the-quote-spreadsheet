@@ -609,13 +609,66 @@ def apply_vendor_to_lines(
     }
 
 
+def analyst_reason_snippet(answer: dict, vendor_name: str | None = None, limit: int = 420) -> str:
+    """Buyer-facing reason pulled from the analyst answer (engine prose, not invented)."""
+    raw = (answer.get("answer") or "").strip()
+    if not raw:
+        q = (answer.get("question") or "").strip()
+        if vendor_name and q:
+            return f"{vendor_name} — from analyst answer to: {q}"[:limit]
+        return q[:limit] if q else "Analyst suggested this vendor."
+    lower = raw.lower()
+    chunk = raw
+    for marker in ("## recommendation", "### recommendation", "**recommendation"):
+        idx = lower.find(marker)
+        if idx >= 0:
+            chunk = raw[idx:]
+            break
+    lines: list[str] = []
+    for line in chunk.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        s = re.sub(r"[*_`]+", "", s)
+        s = re.sub(r"^\s*[-•]\s*", "", s)
+        s = re.sub(r"^\d+\.\s*", "", s)
+        if not s:
+            continue
+        if vendor_name and vendor_name.lower() not in s.lower() and lines:
+            if sum(len(x) for x in lines) > 120:
+                break
+        lines.append(s)
+        if sum(len(x) + 1 for x in lines) >= limit:
+            break
+    text_out = " ".join(lines).strip()
+    if vendor_name and vendor_name.lower() not in text_out.lower():
+        text_out = f"{vendor_name}: {text_out}" if text_out else f"Analyst suggested {vendor_name}."
+    if len(text_out) > limit:
+        text_out = text_out[: limit - 1].rstrip() + "…"
+    return text_out or (f"Analyst suggested {vendor_name}." if vendor_name else "Analyst suggestion.")
+
+
+def _enrich_action(action: dict, answer: dict) -> dict:
+    name = action.get("vendor_name") or action.get("vendor_id") or "vendor"
+    reason = action.get("reason") or analyst_reason_snippet(answer, name)
+    action["reason"] = reason
+    action["send_label"] = action.get("send_label") or f"Send award to {name}"
+    if not action.get("label"):
+        lines = action.get("line_nos") or []
+        action["label"] = (
+            f"Apply {name}"
+            + (f" to line(s) {', '.join(str(n) for n in lines)}" if lines else " to eligible lines")
+        )
+    return action
+
+
 def attach_apply_actions(state: dict, answer: dict, live: dict | None = None) -> dict:
-    """Attach apply_actions metadata so Ask UI can offer Apply this vendor."""
+    """Attach apply_actions so Ask UI can offer Apply / Send award to vendor."""
     live = _live(state, live)
     actions: list[dict] = []
     premade_id = answer.get("premade_id")
-    if premade_id == "best_split" and live.get("available"):
-        # Apply the quality-gated default split (from live split rows)
+    split_ids = {"best_split", "quality_gated_split"}
+    if premade_id in split_ids and live.get("available"):
         split = live.get("split") or {}
         by_vendor: dict[str, list[int]] = {}
         for row in split.get("rows") or []:
@@ -625,15 +678,16 @@ def attach_apply_actions(state: dict, answer: dict, live: dict | None = None) ->
             by_vendor.setdefault(wid, []).append(row["line_no"])
         by_id = {v["vendor_id"]: v for v in state.get("vendors") or []}
         for vid, lines in by_vendor.items():
+            name = (by_id.get(vid) or {}).get("name") or vid
             actions.append(
                 {
                     "vendor_id": vid,
-                    "vendor_name": (by_id.get(vid) or {}).get("name") or vid,
+                    "vendor_name": name,
                     "line_nos": sorted(lines),
-                    "label": f"Apply {(by_id.get(vid) or {}).get('name') or vid} to their {len(lines)} line(s)",
+                    "label": f"Apply {name} to their {len(lines)} line(s)",
+                    "reason": analyst_reason_snippet(answer, name),
                 }
             )
-        # Also a single "Apply suggested split" that applies all
         if by_vendor:
             answer["apply_all_split"] = {
                 "allocation": {
@@ -642,17 +696,19 @@ def attach_apply_actions(state: dict, answer: dict, live: dict | None = None) ->
                     if row.get("winner_id")
                 },
                 "label": "Apply suggested split to draft",
+                "send_label": "Send awards from this split",
+                "reason": analyst_reason_snippet(answer),
             }
     else:
-        # Heuristic: find vendor names and line numbers in question + answer
-        text = f"{answer.get('question') or ''}\n{answer.get('answer') or ''}"
-        line_nos = sorted({int(n) for n in re.findall(r"\bl(?:ine)?\s*(\d+)\b", text, flags=re.I)})
+        text_blob = f"{answer.get('question') or ''}\n{answer.get('answer') or ''}"
+        line_nos = sorted(
+            {int(n) for n in re.findall(r"\bl(?:ine)?\s*(\d+)\b", text_blob, flags=re.I)}
+        )
         by_name = {v["name"].lower(): v for v in state.get("vendors") or []}
         found_vendors = []
         for name, v in by_name.items():
-            if name.lower() in text.lower():
+            if name.lower() in text_blob.lower():
                 found_vendors.append(v)
-        # Prefer Pass vendors mentioned
         gate_by_id = {g.get("vendor_id"): g for g in _gate_rows(live)} if live.get("available") else {}
         for v in found_vendors:
             g = gate_by_id.get(v["vendor_id"]) or {}
@@ -665,12 +721,89 @@ def attach_apply_actions(state: dict, answer: dict, live: dict | None = None) ->
                     "line_nos": line_nos,
                     "label": (
                         f"Apply {v['name']}"
-                        + (f" to line(s) {', '.join(str(n) for n in line_nos)}" if line_nos else " to eligible lines")
+                        + (
+                            f" to line(s) {', '.join(str(n) for n in line_nos)}"
+                            if line_nos
+                            else " to eligible lines"
+                        )
                     ),
+                    "reason": analyst_reason_snippet(answer, v["name"]),
                 }
             )
+    for i, a in enumerate(actions):
+        _enrich_action(a, answer)
+        a["primary"] = False
+    if len(actions) == 1:
+        actions[0]["primary"] = True
+    elif actions:
+        # Overall / single-winner style questions: first Pass mention is primary
+        actions[0]["primary"] = True
     answer["apply_actions"] = actions
     return answer
+
+
+def clear_award_from_ask(state: dict) -> None:
+    state.pop("award_from_ask", None)
+
+
+def preload_from_analyst(
+    state: dict,
+    vendor_id: str,
+    *,
+    line_nos: list[int] | None = None,
+    reason: str = "",
+    question: str = "",
+    chat_idx: int | None = None,
+    live: dict | None = None,
+) -> dict:
+    """Apply suggested vendor to draft + stash reason banner for Award page."""
+    out = apply_vendor_to_lines(state, vendor_id, line_nos, live)
+    reason_text = (reason or "").strip() or f"Analyst suggested {out['vendor_name']}."
+    banner = {
+        "vendor_id": vendor_id,
+        "vendor_name": out["vendor_name"],
+        "line_nos": list(out["applied_lines"]),
+        "reason": reason_text,
+        "question": question or "",
+        "chat_idx": chat_idx,
+        "at": _now(),
+        "focus_send": True,
+    }
+    state["award_from_ask"] = banner
+    return {"apply": out, "banner": banner}
+
+
+def preload_split_from_analyst(
+    state: dict,
+    allocation: dict[str, str],
+    *,
+    reason: str = "",
+    question: str = "",
+    chat_idx: int | None = None,
+) -> dict:
+    """Apply a multi-vendor split from Ask, then stash reason for Award."""
+    update_allocation(state, {str(k): str(v) for k, v in allocation.items()})
+    counts: dict[str, int] = {}
+    for vid in allocation.values():
+        counts[str(vid)] = counts.get(str(vid), 0) + 1
+    primary_id = max(counts, key=counts.get) if counts else None
+    by_id = {v["vendor_id"]: v for v in state.get("vendors") or []}
+    primary_name = (by_id.get(primary_id) or {}).get("name") if primary_id else None
+    reason_text = (reason or "").strip() or "Analyst suggested this award split."
+    banner = {
+        "vendor_id": primary_id,
+        "vendor_name": primary_name or "Suggested split",
+        "line_nos": sorted(int(k) for k in allocation.keys() if str(k).isdigit()),
+        "reason": reason_text,
+        "question": question or "",
+        "chat_idx": chat_idx,
+        "at": _now(),
+        "focus_send": True,
+        "split": True,
+    }
+    state["award_from_ask"] = banner
+    return {"allocation": allocation, "banner": banner}
+
 
 
 def mark_sent(state: dict, confirmation: dict) -> dict:

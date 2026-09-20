@@ -101,6 +101,10 @@ def ask(request: Request, rfx_id: str, question: str = Form(...)):
             state.setdefault("chat", []).append(failed)
             storage.save_state(rfx_id, state)
             return render(request, "partials/chat_message.html", state=state, m=failed, idx=len(state["chat"]) - 1)
+        from core import award_draft as _ad
+
+        live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
+        _ad.attach_apply_actions(state, result, live if live.get("available") else None)
         state.setdefault("chat", []).append(result)
         storage.save_state(rfx_id, state)
         return render(request, "partials/chat_message.html", state=state, m=result, idx=len(state["chat"]) - 1)
@@ -124,6 +128,10 @@ async def ask_premade(request: Request, rfx_id: str, prompt_id: str = Form("")):
         result = compare_ask.get_or_build_premade(state, pid)
     except ValueError as e:
         return error_fragment(str(e), 400)
+    from core import award_draft as _ad
+
+    live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
+    _ad.attach_apply_actions(state, result, live if live.get("available") else None)
     state.setdefault("chat", []).append(result)
     storage.save_state(rfx_id, state)
     idx = len(state["chat"]) - 1
@@ -168,6 +176,10 @@ def rerun_ask(request: Request, rfx_id: str, idx: int):
             state.setdefault("chat", []).append(failed)
             storage.save_state(rfx_id, state)
             return render(request, "partials/chat_message.html", state=state, m=failed, idx=len(state["chat"]) - 1)
+        from core import award_draft as _ad
+
+        live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
+        _ad.attach_apply_actions(state, result, live if live.get("available") else None)
         state.setdefault("chat", []).append(result)
         storage.save_state(rfx_id, state)
         return render(request, "partials/chat_message.html", state=state, m=result, idx=len(state["chat"]) - 1)
