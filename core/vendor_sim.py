@@ -112,6 +112,24 @@ def _round_up(x: float, step: float) -> float:
     return math.ceil(x / step) * step
 
 
+def _text_answer(question: str) -> str:
+    """A plausible free-text questionnaire answer keyed on what the question asks about."""
+    q = question.lower()
+    if "capacity" in q:
+        return "3 corrugation lines, 1,800 MT/month installed; ~72% utilised"
+    if "reference" in q or "experience" in q or "customer" in q:
+        return "Parle Agro (Mr. S. Kulkarni, 98220 11223), Haldiram's Nagpur (Ms. R. Deshmukh, 98230 44556)"
+    if "print" in q or "flexo" in q or "colour" in q:
+        return "4-colour flexo folder-gluer; plate change 40 min; spectrophotometer checks per shift"
+    if "capa" in q or "complaint" in q or "corrective" in q:
+        return "Documented CAPA under ISO 9001; average closure 7 working days"
+    if "traceab" in q or "lot" in q or "batch" in q:
+        return "Yes, batch code and date printed on every carton flap"
+    if "test" in q or "bct" in q or "ect" in q or "quality control" in q or "inspection" in q:
+        return "In-house lab with BCT, ECT and Cobb testers; reports issued per lot; AQL 1.0 sampling"
+    return "Yes, details available on request"
+
+
 # ---------------------------------------------------------------------------
 # V1: the beautiful Excel that ignores the template
 # ---------------------------------------------------------------------------
@@ -188,7 +206,7 @@ def build_v1_xlsx(rfx: dict, prices: dict[int, float], rng: random.Random) -> by
             ws2.cell(row=i, column=2, value="Attached")
             ws2.cell(row=i, column=3, value="See ISO 9001:2015 certificate PDF")
         else:
-            ws2.cell(row=i, column=2, value=rng.choice(["In-house lab with BCT and ECT testers; reports shared per lot", "3 lines, 1,800 MT/month capacity", "Godrej Consumer, Parle Agro, Haldiram's (Nagpur)"]))
+            ws2.cell(row=i, column=2, value=_text_answer(q["text"]))
     ws2.column_dimensions["A"].width = 80
     ws2.column_dimensions["B"].width = 14
     ws2.column_dimensions["C"].width = 50

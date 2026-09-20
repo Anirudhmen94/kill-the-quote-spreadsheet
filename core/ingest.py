@@ -118,16 +118,25 @@ def docx_to_text(data: bytes) -> str:
 
 
 def email_to_text(data: bytes) -> str:
-    raw = data.decode("utf-8", errors="replace")
-    try:
-        msg = email.message_from_string(raw, policy=email.policy.default)
-        headers = [f"[header] {k}: {msg[k]}" for k in ("From", "To", "Date", "Subject") if msg[k]]
-        body = msg.get_body(preferencelist=("plain", "html"))
-        body_text = body.get_content() if body else raw
-    except Exception:
-        headers, body_text = [], raw
-    if not headers:  # plain .txt without headers
-        body_text = raw
+    raw = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    headers: list[str] = []
+    body_text = raw
+    head, sep, rest = raw.partition("\n\n")
+    if sep and re.match(r"^(From|To|Subject|Date|Received|Return-Path|Message-ID):", head, re.I | re.M):
+        try:
+            msg = email.message_from_string(head + "\n\n", policy=email.policy.default)
+            headers = [f"[header] {k}: {msg[k]}" for k in ("From", "To", "Date", "Subject") if msg[k]]
+        except Exception:
+            headers = []
+        # Take the body straight from the raw text so non-ASCII (₹) survives missing charset declarations.
+        body_text = rest
+        if "Content-Type:" in head and "multipart" in head.lower():
+            try:
+                msg = email.message_from_string(raw, policy=email.policy.default)
+                body = msg.get_body(preferencelist=("plain", "html"))
+                body_text = body.get_content() if body else rest
+            except Exception:
+                body_text = rest
     lines = [f"[line {i}] {ln.rstrip()}" for i, ln in enumerate(body_text.splitlines(), start=1) if ln.strip()]
     return "\n".join(headers + lines)
 

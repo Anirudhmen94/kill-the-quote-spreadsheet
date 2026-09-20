@@ -48,6 +48,26 @@ Rules:
    like "certificate available on request" is claimed_in_text=true, attached_as_document=false.
 9. Confidence is your honest estimate (0-1) that the value and its mapping are correct. Photographed or
    transcribed documents deserve lower confidence on digits marked '?' or rows marked '[cut off]'.
+10. WHAT STATUS MEANS. A line quote's status is about whether the PRICE VALUE and its LINE MAPPING are reliable.
+   - ok: the number is clearly legible, its basis (per pc / per 100 / per 1000 / per kg / per box of N) and currency
+     are stated or unambiguous, and the row clearly maps to one RFx line (by the supplier's own line reference, or by
+     dimensions + ply). A truncated description is fine when size, ply and sequence agree.
+   - Do NOT use needs_review merely because the supplier's basis differs from what the RFx asked for (per 100 instead
+     of per piece, USD instead of INR, per kg, per bundle of a stated size, ex-works / CIF instead of delivered,
+     freight or GST extra). Record the basis faithfully; report incoterm / freight / GST differences ONCE as commercial
+     terms and in `notes`. The buyer's system converts units and currencies and flags those cells itself.
+   - needs_review: ambiguous mapping (candidates), illegible or '?' digits, an alternate specification offered,
+     pack size or currency not stated, a value you had to infer, or conflicting figures for the same row.
+   - unresolved: the price depends on information not in the documents ("same as last year", "on request").
+   Always fill `review_cause`. Examples:
+     "Rs. 330 per box (bundle) of 20 nos" → price 330, INR, per_bundle, basis_qty 20, status ok, review_cause none.
+     "USD 614.5 per 1,000 pcs CIF Nhava Sheva" → price 614.5, USD, per_1000, basis_qty 1000, status ok, cause none
+       (report CIF / inland freight excluded as a freight term).
+     "Rs. 1693 per 100 Nos" → per_100, basis_qty 100, ok.  "51/kg for the 3-ply" → per_kg, ok, one quote per 3-ply line.
+     Row says "400x300x250 3-ply" but two RFx lines share that size (one printed, one plain) and the row does not
+       say which → line_no null, candidates [1, 2], needs_review, cause ambiguous_mapping.
+     Row omits flute but size + ply + the supplier's own line number match exactly one RFx line → ok, cause none,
+       confidence ~0.85; mention the unconfirmed flute in `reason` only if you consider it material (cause spec_not_confirmed).
 """
 
 
@@ -160,6 +180,12 @@ def ground(extraction: dict, vendor: dict) -> dict:
             stats["verified"] += 1
 
     for q in extraction.get("line_quotes", []):
+        # The engine converts units, currencies and pack sizes itself; a basis difference alone is not a review reason.
+        if q.get("status") == "needs_review" and q.get("review_cause") == "basis_differs_from_rfx" and q.get("price") is not None and q.get("line_no") is not None:
+            if q.get("price_basis") not in ("per_box", "per_bundle") or q.get("basis_qty"):
+                q["status"] = "ok"
+                q["reason"] = ("Basis differs from RFx; converted by the engine. " + (q.get("reason") or "")).strip()
+                stats["promoted_basis_only"] = stats.get("promoted_basis_only", 0) + 1
         check(q)
         if q.get("status") == "ok" and q.get("price") is None:
             q["status"] = "needs_review"

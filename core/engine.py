@@ -200,18 +200,34 @@ def questionnaire_status(rfx: dict, ext: dict | None) -> dict:
     return {"overall": overall, "knockout_failed": knockout_failed, "knockout_open": knockout_open, "answered": sum(1 for r in rows if r["answered"]), "total": len(rows), "rows": rows}
 
 
+def _freight_is_extra(text: str) -> bool:
+    """True when the vendor's freight/delivery wording means the price does not include delivery to the buyer."""
+    import re as _re
+
+    t = _re.sub(r"gst[^.;]*", " ", text)  # 'GST extra' must not be read as freight extra
+    negative = ("freight extra", "transport extra", "freight is extra", "extra at actuals", "at actuals", "not included", "excluded", "exclusive of freight", "ex-works", "ex works", "exw", "ex-factory", "ex factory", "cif ", "fob ", "buyer's account", "buyers account", "to pay", "freight additional")
+    positive = ("delivered", "included", "inclusive", "free delivery", "door delivery", "freight paid", "ddp")
+    neg = any(w in t for w in negative)
+    pos = any(w in t for w in positive)
+    if neg:
+        return True
+    if pos:
+        return False
+    return "extra" in t and ("freight" in t or "transport" in t)
+
+
 def commercial_summary(ext: dict | None) -> dict:
     if not ext:
         return {}
     out = {}
     for t in ext.get("commercials", []):
         out.setdefault(t["key"], []).append(t)
-    freight = out.get("freight", [])
-    freight_text = " ".join(t.get("value", "") for t in freight).lower()
+    freight = out.get("freight", []) + out.get("delivery", [])
+    freight_text = " ".join((t.get("value", "") + " " + t.get("applies_to", "")) for t in freight).lower()
     disc = out.get("discount", [])
     return {
         "terms": out,
-        "freight_extra": any(w in freight_text for w in ("extra", "ex-works", "ex works", "exw", "not included", "actuals", "buyer")),
+        "freight_extra": _freight_is_extra(freight_text),
         "freight_text": "; ".join(t.get("value", "") for t in freight),
         "discount_pct": next((t.get("numeric_pct") for t in disc if t.get("numeric_pct")), None),
         "discount_condition": "; ".join(f"{t.get('value','')} ({t.get('applies_to','')})".strip() for t in disc),

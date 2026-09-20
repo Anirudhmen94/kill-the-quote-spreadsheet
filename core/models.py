@@ -101,6 +101,21 @@ class EvidenceAI(BaseModel):
     snippet: str = Field(description="VERBATIM text copied from the document, 5-200 characters, that contains the value. Do not paraphrase.")
 
 
+class ReviewCause(str, Enum):
+    none = "none"
+    ambiguous_mapping = "ambiguous_mapping"
+    illegible = "illegible"
+    alternate_spec = "alternate_spec"
+    spec_not_confirmed = "spec_not_confirmed"
+    pack_size_unknown = "pack_size_unknown"
+    currency_unknown = "currency_unknown"
+    inferred_value = "inferred_value"
+    conflicting_values = "conflicting_values"
+    basis_differs_from_rfx = "basis_differs_from_rfx"
+    refers_to_external_info = "refers_to_external_info"
+    other = "other"
+
+
 class LineQuoteAI(BaseModel):
     line_no: Optional[int] = Field(description="RFx line number this vendor row maps to, or null if unsure")
     candidate_line_nos: list[int] = Field(default_factory=list, description="If line_no is null or uncertain, the plausible RFx lines")
@@ -112,6 +127,7 @@ class LineQuoteAI(BaseModel):
     basis_qty: Optional[float] = Field(default=None, description="For per_100 / per_1000 / per_bundle: the quantity the price covers")
     confidence: float = Field(ge=0, le=1)
     status: ExtractStatus
+    review_cause: ReviewCause = Field(description="Primary cause when status is not ok; 'none' when ok. Use basis_differs_from_rfx when the ONLY concern is that the supplier's unit/currency/incoterm differs from the RFx.")
     reason: str = Field(default="", description="Why this is needs_review/unresolved, or empty")
     evidence: Optional[EvidenceAI]
 

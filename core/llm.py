@@ -117,27 +117,24 @@ def structured(
             tool_choice={"type": "tool", "name": "emit"},
             messages=messages,
         )
-        payload = next((b.input for b in resp.content if b.type == "tool_use"), None)
+        tool_use = next((b for b in resp.content if b.type == "tool_use"), None)
         _log(log, purpose, resp.model, resp.usage, started, {"attempt": attempt + 1, "stop_reason": resp.stop_reason})
-        if payload is None:
+        if tool_use is None:
             last_error = f"model returned no tool call (stop_reason={resp.stop_reason})"
         else:
             try:
-                return schema.model_validate(payload)
+                return schema.model_validate(tool_use.input)
             except ValidationError as e:
                 last_error = str(e)[:3000]
-        messages.append({"role": "assistant", "content": resp.content})
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    text_block(
-                        "Your previous output did not validate against the schema. Fix these errors and emit again, "
-                        "keeping all other content identical:\n" + str(last_error)
-                    )
-                ],
-            }
+        feedback = (
+            "Your previous output did not validate against the schema. Fix these errors and emit again, "
+            "keeping all other content identical:\n" + str(last_error)
         )
+        messages.append({"role": "assistant", "content": resp.content})
+        if tool_use is not None:
+            messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use.id, "content": feedback, "is_error": True}]})
+        else:
+            messages.append({"role": "user", "content": [text_block(feedback)]})
     raise RuntimeError(f"Structured output failed after retry: {last_error}")
 
 

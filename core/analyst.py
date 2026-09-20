@@ -15,6 +15,7 @@ SYSTEM = """You are the sourcing analyst for a category buyer comparing five sup
 You answer questions about the comparison strictly by calling the tools provided. Rules:
 
 - NEVER do arithmetic, rank, or estimate yourself. Every number you state must come from a tool result in this conversation.
+  For differences, premiums, percentages or sums across tool results, call `calculate`.
 - Call tools first, then answer. Use several tools if the question needs them (e.g. cheapest_per_line AND questionnaire_overview).
 - Respect the buyer's constraints literally: "only vendors who cleared the questionnaire" → require_cleared_questionnaire=true;
   "include flagged/uncertain values" → allow_needs_review=true; otherwise keep the defaults (flagged values excluded).
@@ -64,6 +65,11 @@ TOOLS: list[dict] = [
     {"name": "commercial_terms", "description": "Payment, validity, GST, lead time, MOQ, freight and discount terms per vendor as extracted.", "input_schema": {"type": "object", "properties": {}}},
     {"name": "fx_rates", "description": "The fixed FX table used for currency normalisation and its as-of date.", "input_schema": {"type": "object", "properties": {}}},
     {
+        "name": "calculate",
+        "description": "Deterministic calculator for any arithmetic you need on numbers returned by other tools (differences, percentages, sums). Give a plain expression using numbers, + - * / ( ) and percent(a, b) which returns a/b*100. Never do this arithmetic in your head.",
+        "input_schema": {"type": "object", "properties": {"expression": {"type": "string"}, "label": {"type": "string", "description": "what this number is, e.g. 'premium for cleared-only split'"}}, "required": ["expression"]},
+    },
+    {
         "name": "make_chart",
         "description": "Ask the interface to draw a chart from engine data (not from numbers you type). kinds: 'vendor_totals_common' (bar of like-for-like totals), 'split_share' (bar of extended value by winning vendor), 'line_prices' (grouped bar of per-piece prices for given line_nos, max 8), 'coverage' (stacked bar of cell statuses per vendor).",
         "input_schema": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["vendor_totals_common", "split_share", "line_prices", "coverage"]}, "line_nos": {"type": "array", "items": {"type": "integer"}}, "require_cleared_questionnaire": {"type": "boolean", "default": False}, "allow_needs_review": {"type": "boolean", "default": False}}, "required": ["kind"]},
@@ -87,8 +93,39 @@ def _chart(cmp: dict, kind: str, line_nos=None, require_cleared=False, allow_nr=
     raise ValueError("unknown chart kind")
 
 
+def safe_calculate(expression: str) -> float:
+    """Evaluate arithmetic safely via the AST: numbers, + - * / ** unary minus, parentheses, percent(a, b)."""
+    import ast
+    import operator as op
+
+    ops = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv, ast.Pow: op.pow, ast.USub: op.neg, ast.UAdd: op.pos}
+
+    def ev(node):
+        if isinstance(node, ast.Expression):
+            return ev(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.BinOp) and type(node.op) in ops:
+            return ops[type(node.op)](ev(node.left), ev(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in ops:
+            return ops[type(node.op)](ev(node.operand))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "percent" and len(node.args) == 2:
+            a, b = ev(node.args[0]), ev(node.args[1])
+            return a / b * 100 if b else float("nan")
+        raise ValueError(f"unsupported expression element: {ast.dump(node)[:60]}")
+
+    import re as _re
+
+    # strip thousands separators (Western 1,234,567 and Indian 46,32,46,40) but keep argument commas
+    cleaned = _re.sub(r"(?<=\d),(?=\d{2,3}(?!\d))", "", expression).replace("₹", "").replace("INR", "").replace("Rs.", "").strip()
+    return ev(ast.parse(cleaned, mode="eval"))
+
+
 def make_executor(cmp: dict):
     def execute(name: str, args: dict) -> Any:
+        if name == "calculate":
+            val = safe_calculate(args["expression"])
+            return {"label": args.get("label", ""), "expression": args["expression"], "result": round(val, 4)}
         if name == "comparison_table":
             return engine.comparison_table(cmp, args.get("vendor_ids"), args.get("line_nos"))
         if name == "cheapest_per_line":
@@ -164,6 +201,8 @@ def tables_from_trace(trace: list[dict]) -> tuple[list[dict], list[dict], list[s
                 add_table(title + " · lines that change winner", out["lines_that_change_winner"])
             elif name in ("questionnaire_overview", "commercial_terms"):
                 add_table(title, [{"vendor": k, **{kk: (", ".join(str(x) for x in vv) if isinstance(vv, list) and not (vv and isinstance(vv[0], dict)) else (", ".join(f"{c['name']}{' (attached)' if c.get('attached') else ' (claimed only)' if c.get('claimed_only') else ''}" for c in vv) if isinstance(vv, list) else vv)) for kk, vv in v.items()}} for k, v in out.items()])
+            elif name == "calculate":
+                add_table("calculate", [{"label": out.get("label"), "expression": out.get("expression"), "result": out.get("result")}])
             elif name == "fx_rates":
                 add_table(title, [{"currency": k, "to_inr": v} for k, v in out["rates_to_inr"].items()] + [{"currency": "as_of", "to_inr": out["as_of"]}])
     return tables, charts, caveats

@@ -78,6 +78,7 @@ def extract(request: Request, rfx_id: str, vendor_id: str):
     try:
         vendor["status"] = "extracting"
         vendor["error"] = None
+        vendor["texts"] = {}  # re-read from the files every time; never reuse a stale transcription
         vendor["extraction"] = extractor.extract_vendor(state, vendor, storage.get_bytes, log=log)
         vendor["status"] = "extracted"
     except llm.AINotConfigured as e:
