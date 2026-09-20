@@ -9,7 +9,7 @@
     </p>
 
     <form hx-post="/draft" hx-target="#draft-result" hx-indicator="#draft-busy" hx-disabled-elt="#draft-btn" class="mt-6 space-y-3">
-      <textarea name="brief" rows="9" required minlength="20"
+      <textarea id="brief-input" name="brief" rows="9" required minlength="20"
         class="w-full rounded-lg border border-slate-300 bg-white p-3 text-sm shadow-sm focus:border-slate-900 focus:ring-0"
         placeholder="e.g. We run a snacks plant in Pune and need about 30 sizes of corrugated shippers and trays for the next year...">{{ example_brief }}</textarea>
       <div class="flex flex-wrap items-center gap-3">
@@ -17,9 +17,10 @@
           class="inline-flex items-center gap-2 rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">
           Draft the RFx
         </button>
+        <span id="draft-hint" class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">Uses cached Chakan RFx (instant)</span>
         <span id="draft-busy" class="htmx-indicator items-center gap-2 text-sm text-slate-600">
           <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-          Drafting 30 line items, terms and questionnaire. Usually 30-60 seconds.
+          <span id="draft-busy-text">Drafting…</span>
         </span>
       </div>
       <div id="draft-result"></div>
@@ -68,4 +69,37 @@
     {% endif %}
   </aside>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const ta = document.getElementById('brief-input');
+  const example = ta ? ta.defaultValue : '';
+  const hint = document.getElementById('draft-hint');
+  const busyText = document.getElementById('draft-busy-text');
+  const btn = document.getElementById('draft-btn');
+  function norm(s) { return (s || '').trim().replace(/\s+/g, ' '); }
+  function refresh() {
+    const cached = norm(ta.value) === norm(example);
+    if (hint) {
+      hint.textContent = cached ? 'Uses cached Chakan RFx (instant)' : 'Live AI draft (fast Haiku model)';
+      hint.className = cached
+        ? 'text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5'
+        : 'text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5';
+    }
+    if (busyText) busyText.textContent = cached
+      ? 'Loading cached Chakan RFx…'
+      : 'Drafting 30 line items with the fast model. Usually under 20 seconds.';
+    // Cached path does not need an API key; live draft does.
+    if (btn) {
+      const aiOk = {{ 'true' if ai_ok else 'false' }};
+      btn.disabled = !(cached || aiOk);
+    }
+  }
+  if (ta) {
+    ta.addEventListener('input', refresh);
+    refresh();
+  }
+})();
+</script>
 {% endblock %}

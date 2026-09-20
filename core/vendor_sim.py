@@ -404,63 +404,58 @@ def _perspective_coeffs(src, dst):
 
 
 def build_v4_photo(rfx: dict, prices: dict[int, float], rng: random.Random) -> bytes:
-    W, H = 1500, 2100
+    # Smaller card + lighter post-process: same messy photo format, ~3-5x faster.
+    W, H = 900, 1260
     card = Image.new("RGB", (W, H), (252, 250, 245))
     dr = ImageDraw.Draw(card)
-    f_title = ImageFont.load_default(size=46)
-    f_head = ImageFont.load_default(size=30)
-    f_row = ImageFont.load_default(size=27)
-    f_small = ImageFont.load_default(size=19)
-    dr.rectangle([0, 0, W, 130], fill=(120, 30, 30))
-    dr.text((60, 35), "MEGHNA CORRUGATORS  -  RATE CARD 2026-27", font=f_title, fill=(255, 255, 255))
-    dr.text((60, 95), "GIDC Vatva, Ahmedabad  |  Ph 98250 12345  |  meghnacorru@gmail.com", font=f_small, fill=(255, 230, 230))
-    dr.text((60, 160), f"Party: Category Sourcing     Enquiry: {rfx['title'][:48]}", font=f_head, fill=(20, 20, 20))
-    y = 220
-    cols = [60, 140, 860, 1090, 1230]
-    heads = ["Sr", "Item", "Size mm", "Ply", "Rate (Rs./Box)"]
-    dr.rectangle([50, y - 10, W - 50, y + 42], fill=(225, 220, 210))
+    f_title = ImageFont.load_default(size=28)
+    f_head = ImageFont.load_default(size=18)
+    f_row = ImageFont.load_default(size=16)
+    f_small = ImageFont.load_default(size=12)
+    dr.rectangle([0, 0, W, 78], fill=(120, 30, 30))
+    dr.text((36, 20), "MEGHNA CORRUGATORS  -  RATE CARD 2026-27", font=f_title, fill=(255, 255, 255))
+    dr.text((36, 56), "GIDC Vatva, Ahmedabad  |  Ph 98250 12345", font=f_small, fill=(255, 230, 230))
+    dr.text((36, 96), f"Party: Category Sourcing  Enquiry: {rfx['title'][:40]}", font=f_head, fill=(20, 20, 20))
+    y = 130
+    cols = [36, 84, 520, 660, 740]
+    heads = ["Sr", "Item", "Size mm", "Ply", "Rs/Box"]
+    dr.rectangle([30, y - 6, W - 30, y + 24], fill=(225, 220, 210))
     for x, h in zip(cols, heads):
         dr.text((x, y), h, font=f_head, fill=(0, 0, 0))
-    y += 56
+    y += 34
     for li in rfx["line_items"]:
         rate_per_box = _round_up(prices[li["line_no"]] * 20, 5)  # box of 20 pieces
         desc = li["description"]
-        if len(desc) > 40:
-            desc = desc[:38] + ".."
+        if len(desc) > 36:
+            desc = desc[:34] + ".."
         vals = [str(li["line_no"]), desc, f"{li['length_mm']}x{li['width_mm']}x{li['height_mm']}", li["board"].replace("-ply", "P"), f"{rate_per_box:,.0f}"]
         for x, v in zip(cols, vals):
             dr.text((x, y), v, font=f_row, fill=(15, 15, 15))
-        dr.line([50, y + 44, W - 50, y + 44], fill=(190, 190, 190), width=2)
-        y += 52
-    dr.text((60, y + 20), "* All rates per box (bundle) of 20 nos., ex-factory Vatva. GST 12% extra. Payment 100% advance for first 3 orders.", font=f_small, fill=(60, 60, 60))
-    dr.text((60, y + 48), "Rates valid 30 days. Transport extra. E&OE.", font=f_small, fill=(60, 60, 60))
-    dr.text((W - 520, y + 90), "For Meghna Corrugators", font=f_small, fill=(60, 60, 60))
-    dr.line([W - 520, y + 150, W - 140, y + 120], fill=(30, 30, 120), width=4)
-    dr.line([W - 500, y + 135, W - 220, y + 150], fill=(30, 30, 120), width=3)
+        dr.line([30, y + 26, W - 30, y + 26], fill=(190, 190, 190), width=1)
+        y += 30
+    dr.text((36, y + 10), "* Rates per box of 20 nos., ex-factory Vatva. GST 12% extra. 100% advance first 3 orders.", font=f_small, fill=(60, 60, 60))
+    dr.text((36, y + 28), "Valid 30 days. Transport extra. E&OE.", font=f_small, fill=(60, 60, 60))
+    dr.text((W - 320, y + 52), "For Meghna Corrugators", font=f_small, fill=(60, 60, 60))
+    dr.line([W - 320, y + 88, W - 80, y + 70], fill=(30, 30, 120), width=3)
 
-    # Photograph it: perspective, on a desk, slightly blurred, uneven light, bottom rows partly cut.
-    out_w, out_h = 1300, 1750
+    out_w, out_h = 780, 1050
     photo = Image.new("RGB", (out_w, out_h), (96, 74, 52))
-    ImageDraw.Draw(photo)
     src = [(0, 0), (W, 0), (W, H), (0, H)]
-    dst = [(150, 120), (1180, 60), (1270, 1660), (40, 1790)]  # bottom edge extends past the frame
+    dst = [(90, 70), (710, 36), (760, 990), (24, 1070)]
     coeffs = _perspective_coeffs(src, dst)
-    warped = card.transform((out_w, out_h), Image.PERSPECTIVE, coeffs, Image.BICUBIC, fillcolor=(96, 74, 52))
-    mask = Image.new("L", (W, H), 255).transform((out_w, out_h), Image.PERSPECTIVE, coeffs, Image.BICUBIC, fillcolor=0)
+    warped = card.transform((out_w, out_h), Image.PERSPECTIVE, coeffs, Image.BILINEAR, fillcolor=(96, 74, 52))
+    mask = Image.new("L", (W, H), 255).transform((out_w, out_h), Image.PERSPECTIVE, coeffs, Image.BILINEAR, fillcolor=0)
     photo.paste(warped, (0, 0), mask)
-    # lighting gradient
-    grad = Image.new("L", (out_w, out_h))
-    gd = ImageDraw.Draw(grad)
-    for i in range(out_h):
-        gd.line([(0, i), (out_w, i)], fill=int(235 - 70 * (i / out_h)))
-    photo = Image.composite(photo, Image.new("RGB", (out_w, out_h), (0, 0, 0)), grad)
-    photo = photo.rotate(-2.5, resample=Image.BICUBIC, fillcolor=(80, 62, 45))
-    photo = photo.filter(ImageFilter.GaussianBlur(0.8))
-    noise = np.array(photo).astype(np.int16)
-    noise += rng.randint(-1, 1) + np.random.default_rng(rng.randint(0, 9999)).integers(-6, 7, size=noise.shape, dtype=np.int16)
-    photo = Image.fromarray(np.clip(noise, 0, 255).astype(np.uint8))
+    # Cheap vertical shading (step every 4 rows instead of per-pixel loop cost)
+    arr = np.asarray(photo).astype(np.int16)
+    shade = (235 - 70 * np.linspace(0, 1, out_h)).astype(np.int16)
+    arr = (arr * shade[:, None, None] / 255).astype(np.int16)
+    arr += np.random.default_rng(rng.randint(0, 9999)).integers(-5, 6, size=arr.shape, dtype=np.int16)
+    photo = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+    photo = photo.rotate(-2.0, resample=Image.BILINEAR, fillcolor=(80, 62, 45))
+    photo = photo.filter(ImageFilter.GaussianBlur(0.5))
     buf = io.BytesIO()
-    photo.save(buf, format="JPEG", quality=78)
+    photo.save(buf, format="JPEG", quality=70, optimize=True)
     return buf.getvalue()
 
 
@@ -526,7 +521,11 @@ def simulate_replies(state: dict) -> None:
     """Generate the five vendor replies and attach them to state['vendors'] (in place)."""
     rfx = state["rfx"]
     rfx_id = state["id"]
-    seed = int(rfx_id[:6], 16)
+    # rfx ids are uuid hex prefixes; fall back if a non-hex id slips in
+    try:
+        seed = int(rfx_id[:6], 16)
+    except ValueError:
+        seed = sum(ord(c) for c in rfx_id) & 0xFFFFFF
     rng = random.Random(seed)
     prices = _vendor_prices(rfx, seed)
     usd_rate = state["fx"]["rates_to_inr"]["USD"] * 1.012  # vendor uses a slightly different rate than treasury

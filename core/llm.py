@@ -27,6 +27,9 @@ T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 FALLBACK_MODEL = "claude-sonnet-4-5"
+# Fast draft path only — extract/analyst keep DEFAULT_MODEL / ANTHROPIC_MODEL.
+DEFAULT_DRAFT_MODEL = "claude-haiku-4-5"
+DRAFT_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
 class AINotConfigured(RuntimeError):
@@ -39,6 +42,10 @@ def is_configured() -> bool:
 
 def model_name() -> str:
     return os.environ.get("ANTHROPIC_MODEL") or DEFAULT_MODEL
+
+
+def draft_model_name() -> str:
+    return os.environ.get("ANTHROPIC_DRAFT_MODEL") or DEFAULT_DRAFT_MODEL
 
 
 def _client():
@@ -66,13 +73,21 @@ def _log(log: list | None, purpose: str, model: str, usage: Any, started: float,
 
 
 def _create(client, **kwargs):
-    """Call messages.create, falling back to an older model if the pinned one is unknown."""
+    """Call messages.create, falling back through optional then default models if unknown."""
+    fallbacks = kwargs.pop("_fallbacks", None) or [FALLBACK_MODEL]
+    tried = {kwargs.get("model")}
     try:
         return client.messages.create(**kwargs)
     except anthropic.NotFoundError:
-        if kwargs.get("model") != FALLBACK_MODEL:
-            kwargs["model"] = FALLBACK_MODEL
-            return client.messages.create(**kwargs)
+        for fb in fallbacks:
+            if fb in tried:
+                continue
+            kwargs["model"] = fb
+            tried.add(fb)
+            try:
+                return client.messages.create(**kwargs)
+            except anthropic.NotFoundError:
+                continue
         raise
 
 
@@ -95,10 +110,14 @@ def structured(
     schema: type[T],
     max_tokens: int = 8000,
     log: list | None = None,
+    model: str | None = None,
 ) -> T:
     """Ask the model to produce an instance of `schema` via a forced tool call."""
     client = _client()
-    model = model_name()
+    model = model or model_name()
+    fallbacks = [FALLBACK_MODEL]
+    if model in (DEFAULT_DRAFT_MODEL, DRAFT_FALLBACK_MODEL) or model == draft_model_name():
+        fallbacks = [DRAFT_FALLBACK_MODEL, FALLBACK_MODEL]
     tool = {
         "name": "emit",
         "description": f"Emit the final structured result. {schema.__doc__ or ''}".strip(),
@@ -116,6 +135,7 @@ def structured(
             tools=[tool],
             tool_choice={"type": "tool", "name": "emit"},
             messages=messages,
+            _fallbacks=fallbacks,
         )
         tool_use = next((b for b in resp.content if b.type == "tool_use"), None)
         _log(log, purpose, resp.model, resp.usage, started, {"attempt": attempt + 1, "stop_reason": resp.stop_reason})

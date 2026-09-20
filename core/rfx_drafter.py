@@ -3,10 +3,11 @@ deterministic engineering data (nominal carton weight) that later powers
 per-kg to per-piece conversion."""
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timezone
 
-from . import llm
+from . import llm, rfx_cache
 from .models import RFxDraftAI
 
 SYSTEM = """You are a senior category manager for packaging procurement in India, drafting an RFx
@@ -24,6 +25,7 @@ Produce a realistic, procurement-grade RFx that a supplier would recognise:
   references. Mark 3-4 as knockout (a 'No' disqualifies).
 - Follow the brief's numbers if it gives any (volumes, sizes, plant location, timelines). Never contradict it.
 - Do not invent supplier names or prices. This is the buyer's document.
+- Keep each line description under ~80 characters so the full 30-item payload fits reliably.
 """
 
 
@@ -40,21 +42,7 @@ def nominal_weight_g(length_mm: int, width_mm: int, height_mm: int, gsm: int) ->
     return round(area_m2 * gsm, 1)
 
 
-def draft_rfx(brief: str, log: list | None = None) -> dict:
-    content = (
-        "Buyer brief (plain language):\n\n" + brief.strip() + "\n\n"
-        "Draft the complete RFx now. Remember: exactly 30 line items."
-    )
-    draft = llm.structured(purpose="draft_rfx", system=SYSTEM, content=content, schema=RFxDraftAI, max_tokens=16000, log=log)
-
-    if len(draft.line_items) != 30:
-        content2 = (
-            content
-            + f"\n\nYour previous draft had {len(draft.line_items)} line items. Produce exactly 30, keeping the same style."
-        )
-        draft = llm.structured(purpose="draft_rfx_retry", system=SYSTEM, content=content2, schema=RFxDraftAI, max_tokens=16000, log=log)
-
-    data = draft.model_dump(mode="json")
+def _enrich(data: dict) -> dict:
     for i, li in enumerate(data["line_items"], start=1):
         li["line_no"] = i  # enforce sequential numbering regardless of model output
         li["uom"] = "pcs"
@@ -64,6 +52,59 @@ def draft_rfx(brief: str, log: list | None = None) -> dict:
         q["q_id"] = f"Q{i}"
     data["created_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return data
+
+
+def draft_rfx(brief: str, log: list | None = None) -> dict:
+    # Instant path: seeded Chakan demo brief → canned complete RFx (no LLM).
+    if rfx_cache.is_example_brief(brief):
+        started = time.time()
+        data = rfx_cache.enrich_cached_rfx(rfx_cache.cached_chakan_rfx())
+        if log is not None:
+            log.append(
+                {
+                    "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "purpose": "draft_rfx_cached",
+                    "model": "cache:chakan_example",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "latency_s": round(time.time() - started, 2),
+                    "attempt": 1,
+                    "stop_reason": "cache_hit",
+                }
+            )
+        return data
+
+    content = (
+        "Buyer brief (plain language):\n\n" + brief.strip() + "\n\n"
+        "Draft the complete RFx now. Remember: exactly 30 line items. "
+        "Prefer concise descriptions; one successful emit is better than a retry."
+    )
+    draft = llm.structured(
+        purpose="draft_rfx",
+        system=SYSTEM,
+        content=content,
+        schema=RFxDraftAI,
+        max_tokens=16000,
+        log=log,
+        model=llm.draft_model_name(),
+    )
+
+    if len(draft.line_items) != 30:
+        content2 = (
+            content
+            + f"\n\nYour previous draft had {len(draft.line_items)} line items. Produce exactly 30, keeping the same style."
+        )
+        draft = llm.structured(
+            purpose="draft_rfx_retry",
+            system=SYSTEM,
+            content=content2,
+            schema=RFxDraftAI,
+            max_tokens=16000,
+            log=log,
+            model=llm.draft_model_name(),
+        )
+
+    return _enrich(draft.model_dump(mode="json"))
 
 
 def new_state(brief: str, rfx: dict) -> dict:

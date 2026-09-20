@@ -154,7 +154,7 @@ def serve_local_file(path: str):
 @app.get("/healthz")
 def healthz(fingerprint: bool = False):
     """Liveness plus, on request, a SHA-1 per source file so a deployment can be verified against the repo."""
-    out = {"ok": True, "ai": llm.is_configured(), "model": llm.model_name(), "storage": storage.backend_name()}
+    out = {"ok": True, "ai": llm.is_configured(), "model": llm.model_name(), "draft_model": llm.draft_model_name(), "storage": storage.backend_name()}
     if fingerprint:
         import hashlib
         from pathlib import Path

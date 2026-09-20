@@ -13,6 +13,13 @@
         {% if has_files %}Regenerate{% else %}Simulate{% endif %} 5 vendor replies
       </button>
     </form>
+    {% if not has_files and ai_ok %}
+    <form hx-post="/rfx/{{ state.id }}/simulate?then=extract" hx-target="#inbox-msg" hx-indicator="#sim-busy" hx-disabled-elt="this button">
+      <button class="rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-900 px-3 py-2 text-sm hover:bg-emerald-100">
+        Simulate &amp; read all
+      </button>
+    </form>
+    {% endif %}
     {% if demo_mode and has_files %}
     <span class="text-xs text-amber-800 max-w-xs">Demo mode protects this seed — use <strong>Interview reset</strong> or turn Demo mode off to regenerate.</span>
     {% endif %}
@@ -83,22 +90,39 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // Read pending vendors one after another so state writes never race.
+  // Prefer server extract-all (ThreadPoolExecutor). Fall back to parallel per-vendor POSTs.
   const btn = document.getElementById('extract-all');
-  if (btn) btn.addEventListener('click', async () => {
-    btn.disabled = true; btn.textContent = 'Reading…';
+  async function readAllPending() {
+    if (!btn) return;
+    btn.disabled = true; btn.textContent = 'Reading in parallel…';
     const cards = [...document.querySelectorAll('[data-vendor-pending="1"]')];
-    for (const card of cards) {
-      const id = card.dataset.vendorId;
-      card.querySelector('[data-role=status]').textContent = 'Reading…';
+    cards.forEach(card => {
+      const st = card.querySelector('[data-role=status]');
+      if (st) st.textContent = 'Reading…';
       card.classList.add('ring-2','ring-amber-300');
+    });
+    try {
+      const res = await fetch(`/rfx/{{ state.id }}/extract-all`, {method: 'POST'});
+      if (res.redirected || res.ok) {
+        window.location.href = `/rfx/{{ state.id }}/inbox`;
+        return;
+      }
+      // Non-OK: fall through to parallel client posts
+    } catch (e) { /* fall through */ }
+    await Promise.all(cards.map(async (card) => {
+      const id = card.dataset.vendorId;
       const res = await fetch(`/rfx/{{ state.id }}/vendor/${id}/extract`, {method: 'POST'});
       const html = await res.text();
       const tmp = document.createElement('div'); tmp.innerHTML = html;
-      card.replaceWith(tmp.firstElementChild);
-      htmx.process(document.getElementById('vendor-grid'));
-    }
+      if (tmp.firstElementChild) card.replaceWith(tmp.firstElementChild);
+    }));
+    htmx.process(document.getElementById('vendor-grid'));
     window.location.reload();
-  });
+  }
+  if (btn) btn.addEventListener('click', readAllPending);
+  // Auto-kick after Simulate & read (?extract=1)
+  if (new URLSearchParams(location.search).get('extract') === '1' && btn) {
+    readAllPending();
+  }
 </script>
 {% endblock %}
