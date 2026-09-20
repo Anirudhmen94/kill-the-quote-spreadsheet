@@ -182,7 +182,7 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 
 @router.get("/rfx/{rfx_id}/award", response_class=HTMLResponse)
 def award_page(request: Request, rfx_id: str):
-    from core import scenario
+    from core import award_packs, scenario
 
     state = load_or_404(rfx_id)
     live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
@@ -200,15 +200,23 @@ def award_page(request: Request, rfx_id: str):
 
     life = scenario.recommendation_lifecycle(state)
     freeze_check_complete = freeze.validate_freeze_request(state, mode="complete")
-    if split and split.get("rows"):
-        for r in split["rows"]:
-            if not r.get("runner_up"):
-                r["runner_up"] = "—"
-                r["gap_pct"] = None
-            elif r.get("gap_pct") is None:
-                r["gap_display"] = "—"
-            else:
-                r["gap_display"] = f"{r['gap_pct']:g}%"
+    gates = live.get("gates") or cmp.get("gates")
+    conditional = live.get("conditional_discounts") if live.get("available") else None
+    enriched_rows = award_packs.enrich_split_rows(split, cmp, gates) if split else []
+    if split is not None:
+        # Keep gap_display on the live split object for the optional auditor table
+        split = {**split, "rows": enriched_rows}
+    vendor_packs = award_packs.vendor_award_packs(
+        split,
+        cmp=cmp,
+        gates=gates,
+        total_extended_inr=(live.get("total_extended_inr") if live.get("available") else None),
+    )
+    uncovered = award_packs.uncovered_line_rows(split)
+    notice_preview = award_packs.notice_previews(
+        state, freeze_pack=pack, live=live if live.get("available") else None, vendor_packs=vendor_packs
+    )
+    unconfirmed = award_packs.unconfirmed_discounts(conditional)
 
     return render(
         request,
@@ -219,8 +227,7 @@ def award_page(request: Request, rfx_id: str):
         live=live,
         current_rec=current_rec,
         historical_recs=historical,
-        blockers=(live.get("blockers") or (awardability.blockers_panel(cmp) if cmp.get("lines") else {"total": 0, "by_kind": {}, "items": []})),
-        gates=live.get("gates") or cmp.get("gates"),
+        gates=gates,
         freeze_pack=pack,
         active="award",
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
@@ -229,8 +236,11 @@ def award_page(request: Request, rfx_id: str):
         market_quote_coverage=cmp.get("market_quote_coverage"),
         freeze_check_complete=freeze_check_complete,
         discount_confirmations=state.get("discount_confirmations") or {},
-        conditional_discounts=(live.get("conditional_discounts") if live.get("available") else None),
-        buyer_review_log=state.get("buyer_review_log") or state.get("reviews") or [],
+        conditional_discounts=conditional,
+        vendor_packs=vendor_packs,
+        uncovered_lines=uncovered,
+        notice_preview=notice_preview,
+        unconfirmed_discounts=unconfirmed,
     )
 
 

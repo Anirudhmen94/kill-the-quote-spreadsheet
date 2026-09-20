@@ -121,13 +121,18 @@ def test_discount_confirm_route_persists_actor_and_snapshot(monkeypatch, tmp_pat
 
 
 def test_award_unsaved_banner_appears_once():
-    """Template smoke: with live calc and no saved rec, the unsaved phrase appears once."""
+    """Template smoke: with live calc and no saved rec, the Ask CTA appears once (slim Award)."""
+    from core import award_packs
+
     st = _seed()
     st["recommendations"] = []
     st["recommendation"] = None
     live = snapshots.live_award_calculation(st)
     life = scenario.recommendation_lifecycle(st)
     assert life.get("banner") in (None, "")  # freeze panel must not duplicate
+    packs = award_packs.vendor_award_packs(live["split"], cmp=live["cmp"], gates=live["gates"])
+    uncovered = award_packs.uncovered_line_rows(live["split"])
+    unconfirmed = award_packs.unconfirmed_discounts(live.get("conditional_discounts"))
     html = templates.get_template("award.html").render(
         {
             "request": mock.Mock(),
@@ -137,8 +142,6 @@ def test_award_unsaved_banner_appears_once():
             "live": live,
             "current_rec": None,
             "historical_recs": [],
-            "blockers": live["blockers"],
-            "exclusion_summary": live.get("exclusion_summary"),
             "gates": live.get("gates"),
             "freeze_pack": None,
             "callouts": [],
@@ -150,7 +153,10 @@ def test_award_unsaved_banner_appears_once():
             "freeze_check_complete": {"ok": False, "errors": []},
             "discount_confirmations": {},
             "conditional_discounts": live.get("conditional_discounts"),
-            "buyer_review_log": [],
+            "vendor_packs": packs,
+            "uncovered_lines": uncovered,
+            "notice_preview": {"frozen": False, "notices": [], "regrets": []},
+            "unconfirmed_discounts": unconfirmed,
             "blended_rate_banner": None,
             "ai_ok": False,
             "model": "",
@@ -164,11 +170,12 @@ def test_award_unsaved_banner_appears_once():
             "demo_prompts": [],
         }
     )
-    phrase = "Current calculation — recommendation not saved"
+    phrase = "No recommendation saved yet"
     assert html.count(phrase) == 1, f"expected once, got {html.count(phrase)}"
-    # Confirm control present for Kraftline
+    assert "Ask on Compare and save" in html
+    # Confirm control present for unconfirmed discounts
     assert "Confirm into official total" in html
-    assert "Conditional discounts" in html
+    assert "Conditional discounts not yet confirmed" in html
 
 
 def test_narrative_validation_fallback_on_contradiction():

@@ -1,32 +1,14 @@
 {% extends "base.html" %}
-{% from "macros.html" import tip, filter_bar_shell, filter_search, filter_select %}
+{% from "macros.html" import tip %}
 {% block title %}Award · {{ state.rfx.title }}{% endblock %}
 {% block content %}
 {% set rec = current_rec %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">Award recommendation {{ tip("Default strategy: cheapest per line among vendors who cleared knockout quality checks.", aria="Award help", width="w-64") }}</h1>
-    <p class="mt-1 text-sm text-slate-600">What you will export and defend. Numbers from the engine, narrative from the analyst, every value traceable to a vendor document.</p>
-  </div>
-  <div class="flex flex-wrap items-center gap-2">
-    <a href="/rfx/{{ state.id }}/ai-log" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">AI call log ({{ state.ai_log|length }})</a>
-    <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
-    <a href="/rfx/{{ state.id }}/memo.md" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Memo (.md)</a>
-    <form method="post" action="/rfx/{{ state.id }}/award/export-notify" class="inline">
-      <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
-        title="Download the award workbook and stub a stakeholder alert into Outbox.">Export award workbook</button>
-    </form>
-    {% if freeze_pack %}
-    <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
-      <button type="submit" class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100"
-        title="Stub award emails to winners and regret emails to others. Nothing is really sent — see Outbox.">Email award / regret notices</button>
-    </form>
-    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
-      title="Zip of locked notices, regrets, memo and workbook tied to the frozen snapshot.">Download freeze pack (.zip)</a>
-    {% endif %}
+    <p class="mt-1 text-sm text-slate-600">Engine recommendation by line · freeze · stub notices. Numbers from the engine; narrative from the analyst.</p>
   </div>
 </div>
-
 
 {% if flash and flash.message %}
 <div class="mt-4 rounded-lg border px-3 py-2 text-sm
@@ -37,158 +19,156 @@
 </div>
 {% endif %}
 
-{% if has_blocking_exceptions %}
-<div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
-  <strong>Resolve exceptions first.</strong>
-  Open or pending-approval exceptions still block a clean quality-gated award.
-  <a href="/rfx/{{ state.id }}/compare#anomalies" class="underline ml-1">Resolve anomalies</a>
-</div>
-{% endif %}
+<div class="mt-6 space-y-8 max-w-5xl">
 
-
-
-{% call filter_bar_shell(
-  "award-filters",
-  tip_text="Display-only filters on the allocation table and blocker list. Freeze, export, and notices stay visible.",
-  search_fields="description,awarded-vendor",
-  items_sel="[data-award-filter-item]",
-  empty_target="#award-filter-empty",
-  url_sync=true,
-  url_prefix="aw_",
-  url_keys="search=awq,coverage=awcov,blocker-kind=awblock,recommendation=awrec,freeze=awfreeze",
-  multi_attrs='data-multi-attr-awarded-vendor="winner-id"'
-) %}
-  {{ filter_search(placeholder="Line or awarded vendor…", title="Search line description or awarded vendor name") }}
-  <details class="relative text-xs">
-    <summary class="cursor-pointer rounded border border-slate-300 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50" title="Filter allocation rows by awarded vendor">Awarded vendor</summary>
-    <div class="absolute z-20 mt-1 max-h-48 w-56 overflow-auto rounded border border-slate-200 bg-white p-2 shadow-lg space-y-1">
-      {% set seen = namespace(ids=[]) %}
-      {% if split and split.rows %}
-        {% for r in split.rows %}
-          {% if r.winner_id and r.winner_id not in seen.ids %}
-            {% set _ = seen.ids.append(r.winner_id) %}
-            <label class="flex items-center gap-2 text-slate-700">
-              <input type="checkbox" data-filter-multi="awarded-vendor" value="{{ r.winner_id }}" checked>
-              <span class="truncate">{{ r.winner }}</span>
-            </label>
-          {% endif %}
-        {% endfor %}
-      {% endif %}
-      {% if not seen.ids %}
-        <div class="text-slate-500 px-1">No awarded vendors yet</div>
-      {% endif %}
-    </div>
-  </details>
-  {{ filter_select("coverage", "Coverage", [
-      ("all", "All lines"),
-      ("awarded", "Awarded"),
-      ("coverage_gap", "Coverage gap"),
-    ], title="Filter by whether the line has an awardable winner", item_attr="coverage") }}
-  {{ filter_select("blocker-kind", "Blockers", [
-      ("all", "All blockers"),
-      ("needs_review", "needs review"),
-      ("unresolved", "unresolved"),
-      ("coverage_gap", "coverage gap"),
-      ("conversion_failed", "conversion failed"),
-      ("assumed", "assumed"),
-    ], title="Filter blocker list by kind", item_attr="kind") }}
-  {% if historical_recs %}
-  {{ filter_select("recommendation", "Recommendation", [
-      ("all", "All recommendations"),
-      ("current", "Current"),
-      ("historical", "Stale / historical"),
-    ], title="Show current or historical recommendations", item_attr="recommendation") }}
-  {% endif %}
-  {{ filter_select("freeze", "Freeze", [
-      ("all", "All freeze states"),
-      ("not_frozen", "Not frozen"),
-      ("frozen", "Frozen"),
-      ("historical", "Historical"),
-    ], title="Filter freeze status markers (freeze actions stay visible)", item_attr="freeze") }}
-{% endcall %}
-<div id="award-filter-empty" class="hidden mt-2 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center text-sm text-slate-500" hidden>No matches — clear filters</div>
-
-<div class="mt-6 grid lg:grid-cols-3 gap-6">
-  <section class="lg:col-span-2 space-y-6">
-
-    {# ---- Current live calculation ---- #}
-    {% if live and live.available %}
+  {# ========== Step 1 · Recommendation ========== #}
+  <section aria-labelledby="award-step-1">
+    <h2 id="award-step-1" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Step 1 · Recommendation</h2>
     <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+      {% if live and live.available %}
+      <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-start justify-between gap-3">
         <div>
-          {% if rec and rec.status == 'current' %}
-          <div class="font-medium">Current award recommendation · Snapshot {{ rec.calculation_snapshot_id or live.snapshot.id }}</div>
-          {% else %}
-          <div class="font-medium">Current calculation — recommendation not saved</div>
-          {% endif %}
-          <div class="text-xs text-slate-500 mt-0.5 font-mono">
-            Vendor data version {{ live.vendor_data_version }}
-            · Snapshot {{ live.snapshot.id }}
+          <div class="font-medium text-slate-900">Quality-gated cheapest per line</div>
+          <p class="text-sm text-slate-600 mt-0.5">Cheapest usable INR/pc among vendors who cleared knockout quality gates. Not winner-takes-all.</p>
+          <div class="text-xs text-slate-500 mt-1.5 font-mono">
+            Snapshot {{ live.snapshot.id }}
+            · Vendor data v{{ live.vendor_data_version }}
             · {{ live.created_at[:16].replace('T',' ') }} UTC
-            · Strategy: <span title="Quality-gated = cheapest usable quote per line among vendors who cleared knockouts.">{{ live.strategy }}</span>
           </div>
         </div>
-        <span class="text-sm font-semibold tabular-nums">{{ live.total_extended_inr|inr }} / yr · {{ live.covered_line_count }} lines covered</span>
-      </div>
-      <div class="px-4 py-3 flex flex-wrap gap-2 text-xs">
-        {% for name, s in live.share_by_vendor.items() %}<span class="rounded bg-slate-100 px-2 py-1">{{ name }}: {{ s.lines }} lines · {{ s.extended_inr|inr }}</span>{% endfor %}
-        {% if live.uncovered_lines %}<span class="rounded bg-rose-100 text-rose-800 px-2 py-1">No usable quote: lines {{ live.uncovered_lines|join(', ') }}</span>{% endif %}
-      </div>
-      {% set disc = conditional_discounts or live.conditional_discounts %}
-      {% if disc and disc.details %}
-      <div class="px-4 py-3 border-t border-slate-100 text-xs space-y-2 bg-slate-50/60">
-        <div class="font-medium text-slate-800">Conditional discounts</div>
-        <div class="flex flex-wrap gap-3">
-          <span class="rounded border border-slate-200 bg-white px-2 py-1">Official total (excludes unconfirmed): <strong class="tabular-nums">{{ live.total_extended_inr|inr }}</strong></span>
-          {% if disc.potential_paise and disc.applied_paise < disc.potential_paise %}
-          <span class="rounded border border-amber-200 bg-amber-50 text-amber-950 px-2 py-1">Potential if all confirmed: <strong class="tabular-nums">{{ disc.potential_official_inr|inr }}</strong> (−{{ disc.potential_inr|inr }})</span>
-          {% elif disc.applied_paise %}
-          <span class="rounded border border-emerald-200 bg-emerald-50 text-emerald-950 px-2 py-1">Confirmed discounts applied: −{{ disc.applied_inr|inr }}</span>
-          {% endif %}
+        <div class="text-right shrink-0">
+          <div class="text-lg font-semibold tabular-nums">{{ live.total_extended_inr|inr }} <span class="text-sm font-normal text-slate-500">/ yr</span></div>
+          <div class="text-xs text-slate-500">{{ live.covered_line_count }} lines covered{% if live.uncovered_lines %} · {{ live.uncovered_lines|length }} uncovered{% endif %}</div>
         </div>
+      </div>
+
+      {% if has_blocking_exceptions %}
+      <div class="px-4 py-2 border-b border-amber-200 bg-amber-50 text-amber-950 text-sm">
+        Open anomalies still block a clean freeze.
+        <a href="/rfx/{{ state.id }}/compare#anomalies" class="underline ml-1 font-medium">Resolve on Compare</a>
+      </div>
+      {% endif %}
+
+      {% if unconfirmed_discounts %}
+      <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/70 text-xs space-y-2">
+        <div class="font-medium text-slate-800">Conditional discounts not yet confirmed</div>
         <ul class="space-y-2">
-          {% for d in disc.details %}
+          {% for d in unconfirmed_discounts %}
           <li class="rounded border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-start justify-between gap-2">
             <div>
               <div class="font-medium text-slate-800">{{ d.vendor }} · {{ d.pct }}%</div>
               <div class="text-slate-600">{{ d.condition }}</div>
-              <div class="text-slate-500 mt-0.5">Potential saving {{ d.potential_saving_inr|inr }}</div>
-              {% if d.confirmed %}
-              <div class="mt-1 text-emerald-800">Confirmed{% if d.confirmed_by %} by {{ d.confirmed_by }}{% endif %}{% if d.confirmed_at %} · {{ d.confirmed_at[:16].replace('T',' ') }} UTC{% endif %}{% if d.confirmed_condition %} · “{{ d.confirmed_condition }}”{% endif %}</div>
-              {% else %}
-              <div class="mt-1 text-amber-900">Not confirmed — held out of official total</div>
-              {% endif %}
+              <div class="text-slate-500 mt-0.5">Potential saving {{ d.potential_saving_inr|inr }} · held out of official total</div>
             </div>
-            {% if not d.confirmed %}
-            <form method="post" action="/rfx/{{ state.id }}/award/confirm-discount" class="shrink-0 flex items-center gap-2">
+            <form method="post" action="/rfx/{{ state.id }}/award/confirm-discount" class="shrink-0">
               <input type="hidden" name="vendor_id" value="{{ d.vendor_id }}">
               <input type="hidden" name="confirmed_by" value="buyer">
               <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
                 title="Apply this conditional discount into the official total. Creates a new calculation snapshot.">Confirm into official total</button>
             </form>
-            {% endif %}
           </li>
           {% endfor %}
         </ul>
       </div>
       {% endif %}
-      {% if split %}
-      <div class="overflow-x-auto">
+
+      <div class="px-4 py-3">
+        {% if rec and rec.status == 'current' %}
+        <div class="text-xs text-slate-500 mb-2">Saved analyst narrative · “{{ rec.question }}” · {{ (rec.saved_at or rec.created_at or '')[:16].replace('T',' ') }} UTC</div>
+        <div class="prose-sm text-sm text-slate-800 max-h-48 overflow-y-auto">{{ (rec.recommendation_markdown or rec.answer) | md | safe }}</div>
+        {% if rec.caveats %}<ul class="mt-2 list-disc pl-5 text-xs text-amber-900 space-y-0.5">{% for c in rec.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+        {% else %}
+        <div class="text-sm text-slate-600">
+          No recommendation saved yet.
+          <a href="/rfx/{{ state.id }}/compare#analyst" class="underline font-medium">Ask on Compare and save</a>
+          as the award recommendation.
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="px-4 py-8 text-center text-sm text-slate-500">Extract vendor responses before an award recommendation is available.</div>
+      {% endif %}
+
+      {% if historical_recs %}
+      <details class="border-t border-slate-100 px-4 py-2 text-xs text-slate-600">
+        <summary class="cursor-pointer hover:text-slate-900">History ({{ historical_recs|length }} stale recommendation{{ 's' if historical_recs|length != 1 else '' }})</summary>
+        <ul class="mt-2 space-y-2 pb-2">
+          {% for h in historical_recs|reverse %}
+          <li class="rounded border border-amber-200 bg-amber-50/50 px-3 py-2">
+            <div class="font-medium text-amber-950">Stale · v{{ h.vendor_data_version if h.vendor_data_version is not none else 'legacy' }} · {{ (h.saved_at or h.created_at or '')[:16].replace('T',' ') }} UTC</div>
+            {% if h.stale_reason %}<div class="text-amber-900 mt-0.5">{{ h.stale_reason }}</div>{% endif %}
+            <div class="mt-1 text-slate-600 line-clamp-3">{{ (h.recommendation_markdown or h.answer or '')[:240] }}{% if (h.recommendation_markdown or h.answer or '')|length > 240 %}…{% endif %}</div>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </div>
+  </section>
+
+  {# ========== Step 2 · Award by vendor ========== #}
+  <section aria-labelledby="award-step-2">
+    <h2 id="award-step-2" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Step 2 · Award by vendor</h2>
+
+    {% if vendor_packs %}
+    <div class="space-y-4">
+      {% for pack in vendor_packs %}
+      <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-baseline justify-between gap-2 bg-slate-50/60">
+          <div>
+            <div class="font-medium text-slate-900">{{ pack.vendor }}</div>
+            <div class="text-xs text-slate-500 mt-0.5">{{ pack.lines_won }} line{{ 's' if pack.lines_won != 1 else '' }} · gate {{ pack.gate_grade }}</div>
+          </div>
+          <div class="text-right text-sm">
+            <span class="font-semibold tabular-nums">{{ pack.extended_inr|inr }}</span>
+            <span class="text-slate-500 text-xs ml-1">{{ pack.share_pct }}% share</span>
+          </div>
+        </div>
+        <ul class="divide-y divide-slate-100 text-xs">
+          {% for ln in pack.lines %}
+          <li class="px-4 py-2 flex flex-wrap gap-x-4 gap-y-1 items-baseline">
+            <span class="text-slate-500 w-8 shrink-0 tabular-nums">L{{ ln.line_no }}</span>
+            <span class="flex-1 min-w-[12rem] text-slate-800 truncate" title="{{ ln.description }}">{{ ln.description }}</span>
+            <span class="tabular-nums text-slate-700 shrink-0">{% if ln.unit_inr is not none %}₹{{ '%.2f'|format(ln.unit_inr) }}/pc{% endif %}</span>
+            <span class="text-slate-600 flex-[2] min-w-[14rem]">{{ ln.why_reason }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endfor %}
+    </div>
+    {% elif live and live.available %}
+    <div class="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">No lines awarded under the quality-gated split yet.</div>
+    {% endif %}
+
+    {% if uncovered_lines %}
+    <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50/40 px-4 py-3">
+      <div class="font-medium text-rose-950 text-sm">Uncovered lines ({{ uncovered_lines|length }})</div>
+      <p class="text-xs text-rose-900 mt-0.5 mb-2">No usable quote among Pass vendors — not mixed into vendor packs.</p>
+      <ul class="text-xs space-y-1">
+        {% for u in uncovered_lines %}
+        <li class="flex gap-3"><span class="text-slate-500 tabular-nums w-8">L{{ u.line_no }}</span><span class="text-slate-800">{{ u.description or '—' }}</span><span class="text-slate-500">{{ u.reason }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if split and split.rows %}
+    <details class="mt-4 rounded-lg border border-slate-200 bg-white text-xs">
+      <summary class="cursor-pointer px-4 py-2.5 font-medium text-slate-700 hover:bg-slate-50">All lines table (auditor view)</summary>
+      <div class="overflow-x-auto border-t border-slate-100">
         <table class="w-full text-xs">
-          <thead class="bg-slate-50 text-slate-600"><tr><th class="px-2 py-1.5 text-left">#</th><th class="px-2 py-1.5 text-left">Line</th><th class="px-2 py-1.5 text-right">Qty</th><th class="px-2 py-1.5 text-left">Award to</th><th class="px-2 py-1.5 text-right">₹/pc</th><th class="px-2 py-1.5 text-right">Extended</th><th class="px-2 py-1.5 text-left">Runner-up</th><th class="px-2 py-1.5 text-right">Gap</th></tr></thead>
+          <thead class="bg-slate-50 text-slate-600"><tr><th class="px-2 py-1.5 text-left">#</th><th class="px-2 py-1.5 text-left">Line</th><th class="px-2 py-1.5 text-right">Qty</th><th class="px-2 py-1.5 text-left">Award to</th><th class="px-2 py-1.5 text-right">₹/pc</th><th class="px-2 py-1.5 text-right">Extended</th><th class="px-2 py-1.5 text-left">Why</th><th class="px-2 py-1.5 text-left">Runner-up</th><th class="px-2 py-1.5 text-right">Gap</th></tr></thead>
           <tbody class="divide-y divide-slate-100">
             {% for r in split.rows %}
-            <tr class="{% if not r.winner %}bg-rose-50{% endif %}" data-award-filter-item data-filter-item
-                data-description="{{ r.description }}"
-                data-awarded-vendor="{{ r.winner or '' }}"
-                data-winner-id="{{ r.winner_id or '' }}"
-                data-coverage="{{ 'awarded' if r.winner else 'coverage_gap' }}">
+            <tr class="{% if not r.winner %}bg-rose-50{% endif %}">
               <td class="px-2 py-1 text-slate-500">{{ r.line_no }}</td>
-              <td class="px-2 py-1 truncate max-w-[280px]">{{ r.description }}</td>
+              <td class="px-2 py-1 truncate max-w-[240px]">{{ r.description }}</td>
               <td class="px-2 py-1 text-right tabular-nums">{{ r.annual_qty|num }}</td>
               <td class="px-2 py-1">{{ r.winner or 'no usable quote' }}</td>
               <td class="px-2 py-1 text-right tabular-nums">{% if r.unit_inr is not none %}{{ '%.2f'|format(r.unit_inr) }}{% endif %}</td>
               <td class="px-2 py-1 text-right tabular-nums">{{ r.extended_inr|inr if r.extended_inr is not none else '' }}</td>
+              <td class="px-2 py-1 text-slate-600 max-w-[280px]">{{ r.why_reason or '—' }}</td>
               <td class="px-2 py-1 text-slate-600">{{ r.runner_up or "—" }}</td>
               <td class="px-2 py-1 text-right tabular-nums text-slate-600">{% if r.gap_display is defined %}{{ r.gap_display }}{% elif r.gap_pct is not none %}{{ r.gap_pct }}%{% else %}—{% endif %}</td>
             </tr>
@@ -196,199 +176,148 @@
           </tbody>
         </table>
       </div>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {# ---- Current saved recommendation ---- #}
-    {% if rec and rec.status == 'current' %}
-    <div class="rounded-lg border border-emerald-200 bg-white" data-award-filter-item data-filter-item data-recommendation="current">
-      <div class="px-4 py-3 border-b border-emerald-100 flex items-center justify-between bg-emerald-50/50">
-        <span class="font-medium text-emerald-950">Current award recommendation · Snapshot {{ rec.calculation_snapshot_id or '—' }}</span>
-        <span class="text-xs text-slate-500">saved {{ (rec.saved_at or rec.created_at or '')[:16].replace('T',' ') }} UTC · v{{ rec.vendor_data_version }}</span>
-      </div>
-      <div class="px-4 py-3">
-        <div class="text-xs text-slate-500 mb-2">In answer to: “{{ rec.question }}”</div>
-        <div class="prose-sm text-sm text-slate-800">{{ (rec.recommendation_markdown or rec.answer) | md | safe }}</div>
-        {% if rec.caveats %}<ul class="mt-3 list-disc pl-5 text-xs text-amber-900 space-y-0.5">{% for c in rec.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
-      </div>
-    </div>
-    {% elif not rec %}
-    <div class="rounded-lg border border-slate-200 bg-white">
-      {% if not (live and live.available) %}
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Current calculation — recommendation not saved</div>
-      {% else %}
-      <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">Save a recommendation</div>
-      {% endif %}
-      <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/compare#analyst" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
-    </div>
-    {% endif %}
-
-    {# ---- Historical / stale recommendations ---- #}
-    {% if historical_recs %}
-    <div class="space-y-3">
-      <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide">Historical recommendations</h2>
-      {% for h in historical_recs|reverse %}
-      <div class="rounded-lg border border-amber-300 bg-amber-50/40" data-award-filter-item data-filter-item data-recommendation="historical">
-        <div class="px-4 py-3 border-b border-amber-200 flex flex-wrap items-center justify-between gap-2">
-          <span class="font-medium text-amber-950">Historical recommendation — stale</span>
-          <span class="text-xs text-amber-900">v{{ h.vendor_data_version if h.vendor_data_version is not none else 'legacy' }} · {{ (h.saved_at or h.created_at or '')[:16].replace('T',' ') }} UTC</span>
-        </div>
-        <div class="px-4 py-3 text-sm">
-          <div class="rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2 mb-3">
-            <strong>This recommendation is stale.</strong>
-            It was generated from vendor data version {{ h.vendor_data_version if h.vendor_data_version is not none else 'unknown (pre-snapshot)' }}.
-            The current data is version {{ vendor_data_version }}.
-            {% if h.stale_reason %}<div class="mt-1">{{ h.stale_reason }}</div>{% endif %}
-            <div class="mt-1">Rerun the analyst question and save a new recommendation before using this for a decision.</div>
-            <div class="mt-1 font-medium">Historical recommendation — not valid for the current vendor dataset</div>
-          </div>
-          <div class="text-xs text-slate-500 mb-2">In answer to: “{{ h.question }}”</div>
-          <div class="prose-sm text-sm text-slate-700 opacity-90">{{ (h.recommendation_markdown or h.answer) | md | safe }}</div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-
-    {# Stale single recommendation that wasn't migrated into historical list #}
-    {% if state.recommendation and state.recommendation.status != 'current' and not historical_recs %}
-    <div class="rounded-lg border border-amber-300 bg-amber-50/40">
-      <div class="px-4 py-3 border-b border-amber-200 font-medium text-amber-950">Historical recommendation — stale</div>
-      <div class="px-4 py-3 text-sm">
-        <div class="rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2 mb-3">
-          This recommendation is stale. {{ state.recommendation.stale_reason or 'Vendor data changed after it was saved.' }}
-        </div>
-        <div class="prose-sm text-sm text-slate-700">{{ (state.recommendation.recommendation_markdown or state.recommendation.answer) | md | safe }}</div>
-      </div>
-    </div>
+    </details>
     {% endif %}
   </section>
 
-  <aside class="space-y-6">
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium inline-flex items-center gap-1.5 w-full">
-        Freeze award
-        {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Later re-reads mark this freeze historical.", aria="Freeze help", width="w-64") }}
-      </div>
-      <div class="px-4 py-3 text-xs space-y-2">
-        {% if freeze_pack and freeze_pack.status == 'frozen' %}
-        <div class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1.5" data-award-filter-item data-filter-item data-freeze="frozen">
-          Frozen · snapshot <span class="font-mono">{{ freeze_pack.calculation_snapshot_id }}</span>
-          · v{{ freeze_pack.vendor_data_version }} · {{ freeze_pack.strategy }}
+  {# ========== Step 3 · Lock & notify ========== #}
+  <section aria-labelledby="award-step-3">
+    <h2 id="award-step-3" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Step 3 · Lock &amp; notify</h2>
+    <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
+
+      {# 1. Freeze #}
+      <div class="px-4 py-4 border-b border-slate-100 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="font-medium text-slate-900 inline-flex items-center gap-1.5">
+            1. Freeze
+            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot.", aria="Freeze help", width="w-64") }}
+          </div>
+          {% if freeze_pack and freeze_pack.status == 'frozen' %}
+          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs">Frozen · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
+          {% elif freeze_pack and freeze_pack.status == 'historical' %}
+          <span class="rounded bg-amber-50 text-amber-950 border border-amber-200 px-2 py-1 text-xs">Previous freeze historical — {{ freeze_pack.superseded_reason }}</span>
+          {% else %}
+          <span class="rounded bg-slate-50 text-slate-700 border border-slate-200 px-2 py-1 text-xs">Not frozen yet</span>
+          {% endif %}
         </div>
-        <a href="/rfx/{{ state.id }}/award/freeze.zip" class="underline">Download notices + regrets + memo + xlsx</a>
-        {% elif freeze_pack and freeze_pack.status == 'historical' %}
-        <div class="rounded bg-amber-50 text-amber-950 border border-amber-200 px-2 py-1.5" data-award-filter-item data-filter-item data-freeze="historical">
-          Previous freeze is historical — {{ freeze_pack.superseded_reason }}
-        </div>
-        {% endif %}
-        {% if not freeze_pack %}
-        <div class="rounded bg-slate-50 text-slate-700 border border-slate-200 px-2 py-1.5" data-award-filter-item data-filter-item data-freeze="not_frozen">Not frozen yet</div>
-        {% endif %}
-        <p class="text-slate-600">Freezes the quality-gated split. Assumed cells stay out unless you confirm.</p>
-        
+
         {% if recommendation_lifecycle and recommendation_lifecycle.banner %}
-        <div class="rounded border border-amber-300 bg-amber-50 text-amber-950 px-2 py-1.5 mb-2">{{ recommendation_lifecycle.banner }}</div>
+        <div class="rounded border border-amber-300 bg-amber-50 text-amber-950 px-2 py-1.5 text-xs">{{ recommendation_lifecycle.banner }}</div>
         {% endif %}
         {% if market_quote_coverage %}
-        <div class="text-[11px] text-slate-600 mb-1">Market quote coverage: <strong>{{ market_quote_coverage.label }}</strong></div>
+        <div class="text-[11px] text-slate-600">Market quote coverage: <strong>{{ market_quote_coverage.label }}</strong></div>
         {% endif %}
-        {% if blended_rate_banner %}
-        <div class="rounded border border-violet-300 bg-violet-50 text-violet-950 px-2 py-1.5 mb-2 text-[11px]">{{ blended_rate_banner }}</div>
+        {% if freeze_check_complete and not freeze_check_complete.ok %}
+        <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
+          Complete freeze blocked:
+          <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+        </div>
         {% endif %}
-        <div id="freeze-review" class="rounded border border-slate-200 bg-slate-50 p-2 space-y-2">
-          <div class="font-medium text-slate-800">Freeze review</div>
-          {% if freeze_check_complete and not freeze_check_complete.ok %}
-          <div class="text-[11px] text-rose-800">
-            Complete freeze blocked:
-            <ul class="list-disc pl-4">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
-          </div>
-          {% endif %}
-          <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2">
-            <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
-            <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">
-              <input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)
-            </label>
-            <div class="border-t border-slate-200 pt-2 space-y-1">
-              <div class="text-[11px] font-medium text-slate-700">Partial freeze acknowledgements</div>
-              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="coverage_gaps"> Acknowledge coverage gaps</label>
-              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="selected_blockers"> Acknowledge selected-award blockers</label>
-              <label class="block text-[11px]">Partial reason
-                <textarea name="partial_reason" rows="2" class="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs" placeholder="Required for partial freeze"></textarea>
+
+        <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2">
+          <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
+          <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
+            {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled title="{{ recommendation_lifecycle.freeze_blocked_reason }}"{% endif %}
+            onclick="document.getElementById('freeze-mode').value='complete'">Freeze this award</button>
+
+          <details class="text-xs text-slate-600">
+            <summary class="cursor-pointer hover:text-slate-900">Advanced… partial freeze, assumed cells, acknowledgements</summary>
+            <div class="mt-2 rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+              <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">
+                <input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)
               </label>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
-                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled title="{{ recommendation_lifecycle.freeze_blocked_reason }}"{% endif %}
-                onclick="document.getElementById('freeze-mode').value='complete'">Freeze complete</button>
+              <div class="border-t border-slate-200 pt-2 space-y-1">
+                <div class="text-[11px] font-medium text-slate-700">Partial freeze acknowledgements</div>
+                <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="coverage_gaps"> Acknowledge coverage gaps</label>
+                <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="selected_blockers"> Acknowledge selected-award blockers</label>
+                <label class="block text-[11px]">Partial reason
+                  <textarea name="partial_reason" rows="2" class="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs" placeholder="Required for partial freeze"></textarea>
+                </label>
+              </div>
               <button type="submit" class="rounded-lg border border-amber-600 text-amber-950 bg-amber-50 px-3 py-1.5 text-xs font-medium hover:bg-amber-100"
                 {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
                 onclick="document.getElementById('freeze-mode').value='partial'">Freeze partial…</button>
             </div>
-          </form>
-        </div>
+          </details>
+        </form>
+      </div>
 
+      {# 2. Preview notices #}
+      <div class="px-4 py-4 border-b border-slate-100 space-y-3">
+        <div class="font-medium text-slate-900">2. Preview notices</div>
+        <p class="text-xs text-slate-500">{% if notice_preview and notice_preview.frozen %}From frozen pack {{ notice_preview.freeze_id }}.{% else %}Draft from the current quality-gated split (same text freeze will lock). Nothing is sent until Step 3.{% endif %}</p>
+        {% if notice_preview and (notice_preview.notices or notice_preview.regrets) %}
+        <div class="grid md:grid-cols-2 gap-3 text-xs">
+          <div class="space-y-2">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-emerald-800">Award notices</div>
+            {% for n in notice_preview.notices %}
+            <div class="rounded border border-emerald-200 bg-emerald-50/40 px-3 py-2">
+              <div class="font-medium text-emerald-950">{{ n.vendor }}</div>
+              <div class="text-slate-600 mt-0.5">{{ n.subject }}</div>
+              {% if n.line_nos %}<div class="text-slate-500 mt-1">Lines: {{ n.line_nos|join(', ') }}</div>{% endif %}
+              <pre class="mt-2 whitespace-pre-wrap text-[11px] text-slate-700 font-sans">{{ n.body }}</pre>
+            </div>
+            {% else %}
+            <div class="text-slate-500">No award notices.</div>
+            {% endfor %}
+          </div>
+          <div class="space-y-2">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Regret notices</div>
+            {% for n in notice_preview.regrets %}
+            <div class="rounded border border-slate-200 bg-slate-50 px-3 py-2">
+              <div class="font-medium text-slate-900">{{ n.vendor }}</div>
+              <div class="text-slate-600 mt-0.5">{{ n.subject }}</div>
+              <pre class="mt-2 whitespace-pre-wrap text-[11px] text-slate-700 font-sans">{{ n.body }}</pre>
+            </div>
+            {% else %}
+            <div class="text-slate-500">No regret notices.</div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="text-xs text-slate-500">No notice drafts yet — run the live calculation first.</div>
+        {% endif %}
+      </div>
+
+      {# 3. Send stub #}
+      <div class="px-4 py-4 border-b border-slate-100 space-y-3">
+        <div class="font-medium text-slate-900">3. Send (stub)</div>
+        <p class="text-xs text-slate-500">Stubs award emails to winners and regret emails to others into Outbox. No real SMTP.</p>
+        {% if freeze_pack %}
+        <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
+          <button type="submit" class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100"
+            title="Stub award emails to winners and regret emails to others. Nothing is really sent — see Outbox.">Send award &amp; regret notices</button>
+        </form>
+        {% else %}
+        <button type="button" disabled class="rounded-lg border border-slate-200 bg-slate-100 text-slate-400 px-4 py-2 text-sm font-medium cursor-not-allowed"
+          title="Freeze the award first.">Send award &amp; regret notices</button>
+        <span class="text-xs text-slate-500 ml-2">Freeze first</span>
+        {% endif %}
+      </div>
+
+      {# 4. Download #}
+      <div class="px-4 py-4 space-y-2">
+        <div class="font-medium text-slate-900">4. Download</div>
+        <div class="flex flex-wrap gap-3 text-sm">
+          {% if freeze_pack %}
+          <a href="/rfx/{{ state.id }}/award/freeze.zip" class="underline text-slate-700 hover:text-slate-900">Download freeze pack (.zip)</a>
+          {% endif %}
+          <form method="post" action="/rfx/{{ state.id }}/award/export-notify" class="inline">
+            <button type="submit" class="underline text-slate-700 hover:text-slate-900 text-sm"
+              title="Download the award workbook and stub a stakeholder alert into Outbox.">Award workbook (.xlsx)</button>
+          </form>
+          <a href="/rfx/{{ state.id }}/memo.md" class="underline text-slate-700 hover:text-slate-900">Memo (.md)</a>
+        </div>
+        <details class="text-xs text-slate-500 mt-2">
+          <summary class="cursor-pointer hover:text-slate-800">More</summary>
+          <ul class="mt-1.5 space-y-1 pl-1">
+            <li><a href="/rfx/{{ state.id }}/ai-log" class="underline">AI call log ({{ state.ai_log|length }})</a></li>
+            <li><a href="/rfx/{{ state.id }}/email#outbox" class="underline">Outbox ({{ state.outbox|length }})</a></li>
+            <li class="text-slate-400">Provisional export: append <code>?provisional=1</code> while vendors are still processing.</li>
+          </ul>
+        </details>
       </div>
     </div>
-
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Blockers {% if blockers %}({{ blockers.total }}){% endif %}</div>
-      {% if blockers and blockers.total %}
-      <ul class="px-4 py-3 text-xs space-y-2 max-h-64 overflow-y-auto">
-        {% for b in blockers.entries %}
-        <li data-award-filter-item data-filter-item
-          data-kind="{{ b.kind }}"
-          data-description="{{ b.description or b.label or '' }}"
-          data-awarded-vendor="{{ b.vendor or '' }}"
-          data-winner-id="{{ b.vendor_id or '' }}"
-          class="border-l-2 pl-2
-          {% if b.kind == 'conversion_failed' or b.kind == 'unresolved' or b.kind == 'coverage_gap' %}border-rose-400
-          {% elif b.kind == 'assumed' or b.kind == 'needs_review' %}border-amber-400
-          {% else %}border-slate-300{% endif %}">
-          <span class="font-medium">{{ b.label }}</span>
-          {% if b.line_no %} · L{{ b.line_no }}{% endif %}{% if b.vendor %} · {{ b.vendor }}{% endif %}
-          <div class="text-slate-600">{{ b.detail }}</div>
-        </li>
-        {% endfor %}
-      </ul>
-      {% if blockers.truncated %}<div class="px-4 pb-3 text-[11px] text-slate-500">Showing first items of {{ blockers.total }}.</div>{% endif %}
-      {% else %}
-      <div class="px-4 py-3 text-xs text-slate-500">No open blockers on awardable cells. Exclusions still listed above.</div>
-      {% endif %}
-    </div>
-
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Data quality</div>
-      <ul class="px-4 py-3 text-xs space-y-2">
-        {% for v in cmp.vendors %}
-        <li>
-          <div class="font-medium text-slate-800">{{ v.name }}</div>
-          <div class="text-slate-600">usable {{ v.usable }}/{{ cmp.line_count }} · review {{ v.counts.needs_review }} · unresolved {{ v.counts.unresolved }} · missing {{ v.counts.missing }} · questionnaire {{ v.questionnaire.overall.replace('_',' ') }}{% if v.commercial.freight_extra %} · freight extra{% endif %}</div>
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Buyer review log ({{ (buyer_review_log or state.reviews)|length }})</div>
-      {% set _log = buyer_review_log if buyer_review_log is defined and buyer_review_log else state.reviews %}
-      {% if _log %}
-      <ul class="px-4 py-3 text-xs space-y-2">
-        {% for r in _log %}<li><span class="text-slate-500">{{ r.at[:16].replace('T',' ') }}</span> · {{ r.vendor_name }} L{{ r.line_no }} · <strong>{{ r.action }}</strong>{% if r.value_inr is not none %} → ₹{{ r.value_inr }}{% endif %}<div class="text-slate-600">{{ r.note }}</div></li>{% endfor %}
-      </ul>
-      {% else %}<div class="px-4 py-3 text-xs text-slate-500">No cells accepted or overridden. Flagged cells stay excluded from totals.</div>{% endif %}
-    </div>
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Exports</div>
-      <ul class="px-4 py-3 text-xs space-y-1.5">
-        <li><a href="/rfx/{{ state.id }}/export.xlsx" class="underline">Award workbook (.xlsx)</a>: Summary, Award by line, Comparison, Flags, Vendors, Evidence, Review log, Snapshot metadata</li>
-        <li><a href="/rfx/{{ state.id }}/memo.md" class="underline">Award memo (.md)</a>: narrative with the same snapshot id and totals as this page</li>
-        <li class="text-slate-500">If vendors are still processing, append <code>?provisional=1</code> for a labelled provisional export.</li>
-      </ul>
-    </div>
-  </aside>
+  </section>
 </div>
-{% endblock %}
-{% block scripts %}
-{% include "partials/filter_bar_script.html" %}
 {% endblock %}

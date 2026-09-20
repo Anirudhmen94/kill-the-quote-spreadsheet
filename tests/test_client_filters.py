@@ -1,4 +1,4 @@
-"""Client-side search/filter bars on Email, Compare, Award — markup smoke tests."""
+"""Client-side search/filter bars on Email and Compare — markup smoke tests."""
 from __future__ import annotations
 
 import re
@@ -115,23 +115,18 @@ def test_compare_anomalies_keeps_status_chips_and_adds_client_filters():
     assert "bg-slate-900 text-white" in r2.text  # active chip styling present
 
 
-def test_award_filter_bar_allocation_and_blockers_only():
+def test_award_page_has_no_filter_bar():
+    """Slim Award redesign removed Award-specific filters; Email/Compare keep theirs."""
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
-    assert 'id="award-filters"' in r.text
-    assert "data-award-filter-item" in r.text
-    assert "data-coverage=" in r.text
-    assert 'data-filter-multi="awarded-vendor"' in r.text
-    assert 'data-filter-control="coverage"' in r.text
-    assert 'data-filter-control="blocker-kind"' in r.text
-    assert 'data-filter-control="freeze"' in r.text
-    # Freeze / export / notices remain in the page (always visible controls)
-    assert "Freeze award" in r.text
-    assert "Export award workbook" in r.text
-    assert "Email award / regret notices" in r.text or "freeze.zip" in r.text or "Download freeze pack" in r.text or "Export award workbook" in r.text
-    # Blocker list items carry kind
-    assert re.search(r'data-kind="(needs_review|unresolved|coverage_gap|assumed|conversion_failed)"', r.text)
+    assert 'id="award-filters"' not in r.text
+    assert "data-award-filter-item" not in r.text
+    assert 'data-filter-multi="awarded-vendor"' not in r.text
+    assert 'data-filter-control="blocker-kind"' not in r.text
+    # Freeze / send / download still reachable
+    assert "Freeze this award" in r.text
+    assert "Send award" in r.text or "freeze.zip" in r.text or "Award workbook" in r.text
 
 
 def test_filter_macros_and_script_partial_exist():
