@@ -313,6 +313,25 @@ def vendor_text(request: Request, rfx_id: str, vendor_id: str, file_id: str):
     return render(request, "partials/text_drawer.html", state=state, v=vendor, f=f, t=t)
 
 
+def _outbox_clarification(state: dict, vendor_id: str, outbox_id: str) -> dict:
+    for m in state.get("outbox") or []:
+        if m.get("id") == outbox_id and m.get("kind") == "clarification" and m.get("vendor_id") == vendor_id:
+            return m
+    raise HTTPException(404, "clarification draft not found")
+
+
+def _draft_view(item: dict) -> dict:
+    delivery = item.get("delivery") or "draft"
+    sent = bool(item.get("sent_at")) and delivery != "draft"
+    return {
+        "subject": item.get("subject") or "",
+        "body": item.get("body") or "",
+        "points": item.get("points") or [],
+        "delivery": delivery,
+        "sent": sent,
+    }
+
+
 @router.post("/rfx/{rfx_id}/vendor/{vendor_id}/clarify", response_class=HTMLResponse)
 def clarify_vendor(request: Request, rfx_id: str, vendor_id: str):
     state = load_or_404(rfx_id)
@@ -325,10 +344,94 @@ def clarify_vendor(request: Request, rfx_id: str, vendor_id: str):
         return error_fragment(str(e), 400)
     except Exception as e:
         return error_fragment(f"Could not draft the email: {e}")
+    outbox_id = None
     if draft["points"]:
-        state["outbox"].append({"kind": "clarification", "to": vendor.get("email") or "", "vendor_id": vendor_id, "vendor_name": vendor["name"], "subject": draft["subject"], "body": draft["body"], "sent_at": now_iso(), "delivery": "stubbed (no SMTP)"})
+        outbox_id = uuid.uuid4().hex[:10]
+        item = {
+            "id": outbox_id,
+            "kind": "clarification",
+            "to": vendor.get("email") or "",
+            "vendor_id": vendor_id,
+            "vendor_name": vendor["name"],
+            "subject": draft["subject"],
+            "body": draft["body"],
+            "points": list(draft.get("points") or []),
+            "created_at": now_iso(),
+            "sent_at": None,
+            "delivery": "draft",
+        }
+        state.setdefault("outbox", []).append(item)
+        vendor["clarification_draft_id"] = outbox_id
         storage.save_state(rfx_id, state)
-    return render(request, "partials/clarification.html", state=state, v=vendor, draft=draft)
+        draft = _draft_view(item)
+    return render(
+        request,
+        "partials/clarification.html",
+        state=state,
+        v=vendor,
+        draft=draft,
+        outbox_id=outbox_id,
+    )
+
+
+@router.post("/rfx/{rfx_id}/vendor/{vendor_id}/clarify/save", response_class=HTMLResponse)
+def save_clarification(
+    request: Request,
+    rfx_id: str,
+    vendor_id: str,
+    outbox_id: str = Form(...),
+    subject: str = Form(""),
+    body: str = Form(""),
+):
+    state = load_or_404(rfx_id)
+    vendor = _vendor(state, vendor_id)
+    item = _outbox_clarification(state, vendor_id, outbox_id)
+    if item.get("sent_at") and item.get("delivery") != "draft":
+        return error_fragment("This clarification was already stub-sent.", 400)
+    item["subject"] = (subject or "").strip() or item.get("subject") or ""
+    item["body"] = body if body is not None else (item.get("body") or "")
+    item["updated_at"] = now_iso()
+    item["delivery"] = "draft"
+    storage.save_state(rfx_id, state)
+    return render(
+        request,
+        "partials/clarification.html",
+        state=state,
+        v=vendor,
+        draft=_draft_view(item),
+        outbox_id=outbox_id,
+        flash="Saved. Edits are stored on the outbox draft; Send (stub) will use this text.",
+    )
+
+
+@router.post("/rfx/{rfx_id}/vendor/{vendor_id}/clarify/send", response_class=HTMLResponse)
+def send_clarification(
+    request: Request,
+    rfx_id: str,
+    vendor_id: str,
+    outbox_id: str = Form(...),
+    subject: str = Form(""),
+    body: str = Form(""),
+):
+    """Stub-send: persist current form text onto the outbox item and mark delivery stubbed."""
+    state = load_or_404(rfx_id)
+    vendor = _vendor(state, vendor_id)
+    item = _outbox_clarification(state, vendor_id, outbox_id)
+    item["subject"] = (subject or "").strip() or item.get("subject") or ""
+    item["body"] = body if body is not None else (item.get("body") or "")
+    item["updated_at"] = now_iso()
+    item["sent_at"] = now_iso()
+    item["delivery"] = "stubbed (no SMTP)"
+    storage.save_state(rfx_id, state)
+    return render(
+        request,
+        "partials/clarification.html",
+        state=state,
+        v=vendor,
+        draft=_draft_view(item),
+        outbox_id=outbox_id,
+        flash="Stub-sent. Outbox now holds the edited subject and body (no real SMTP).",
+    )
 
 
 @router.post("/rfx/{rfx_id}/vendor/{vendor_id}/remove", response_class=HTMLResponse)

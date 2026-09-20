@@ -116,7 +116,7 @@
       <span class="inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-xs uppercase">{{ m.kind }}</span>
       <span class="font-medium">{{ m.subject }}</span>
       <span class="text-slate-500">to {{ m.vendor_name }} &lt;{{ m.to }}&gt;</span>
-      <span class="ml-auto text-xs text-slate-400">{{ m.sent_at[:16].replace('T',' ') }} UTC &middot; {{ m.delivery }}</span>
+      <span class="ml-auto text-xs text-slate-400">{% if m.sent_at %}{{ m.sent_at[:16].replace('T',' ') }} UTC &middot; {% endif %}{{ m.delivery }}</span>
     </summary>
     <pre class="px-4 pb-4 text-sm whitespace-pre-wrap font-sans text-slate-700">{{ m.body }}</pre>
   </details>

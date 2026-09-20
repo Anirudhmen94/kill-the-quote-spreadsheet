@@ -1,14 +1,56 @@
 {% set drawer_kicker = 'Clarification request · ' ~ v.name %}
 {% set drawer_title = draft.subject %}
 {% include "partials/drawer_open.html" %}
-  {% if draft.points %}
-  <div class="rounded border border-emerald-200 bg-emerald-50 text-emerald-900 p-3 text-xs">Drafted by the model from {{ draft.points|length }} open points detected by the engine, and placed in the <a href="/rfx/{{ state.id }}/email#outbox" class="underline">outbox</a> (delivery stubbed).</div>
+  {% if flash %}
+  <div class="rounded border border-emerald-200 bg-emerald-50 text-emerald-900 p-3 text-xs">{{ flash }}</div>
   {% endif %}
-  <pre class="rounded bg-slate-50 border border-slate-200 p-3 text-sm whitespace-pre-wrap font-sans leading-relaxed">{{ draft.body }}</pre>
-  {% if draft.points %}
+  {% if draft.points and outbox_id %}
+  <div class="rounded border border-sky-200 bg-sky-50 text-sky-900 p-3 text-xs">
+    Drafted by the model from {{ draft.points|length }} open points. Edit the subject and body below, then <strong>Save</strong> to keep changes in the outbox draft, or <strong>Send (stub)</strong> to mark delivery stubbed with the current text.
+    {% if draft.delivery == 'draft' %}
+    <span class="ml-1 rounded bg-amber-100 text-amber-900 px-1.5 py-0.5">Draft — not sent</span>
+    {% elif draft.delivery %}
+    <span class="ml-1 rounded bg-slate-200 text-slate-700 px-1.5 py-0.5">{{ draft.delivery }}</span>
+    {% endif %}
+  </div>
+  <form id="clarify-form-{{ outbox_id }}" class="space-y-3">
+    <input type="hidden" name="outbox_id" value="{{ outbox_id }}">
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="clarify-subject-{{ outbox_id }}">Subject</label>
+      <input id="clarify-subject-{{ outbox_id }}" name="subject" type="text"
+             value="{{ draft.subject }}"
+             class="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+             {% if draft.sent %}readonly{% endif %}>
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-slate-600 mb-1" for="clarify-body-{{ outbox_id }}">Body</label>
+      <textarea id="clarify-body-{{ outbox_id }}" name="body" rows="14"
+                class="w-full rounded border border-slate-300 px-3 py-2 text-sm font-sans leading-relaxed focus:outline-none focus:ring-2 focus:ring-slate-400 whitespace-pre-wrap"
+                {% if draft.sent %}readonly{% endif %}>{{ draft.body }}</textarea>
+    </div>
+    {% if not draft.sent %}
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button"
+              hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify/save"
+              hx-include="#clarify-form-{{ outbox_id }}"
+              hx-target="#drawer-root"
+              class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50">Save</button>
+      <button type="button"
+              hx-post="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/clarify/send"
+              hx-include="#clarify-form-{{ outbox_id }}"
+              hx-target="#drawer-root"
+              class="rounded bg-slate-900 text-white px-3 py-1.5 text-sm hover:bg-slate-800">Send (stub)</button>
+      <a href="/rfx/{{ state.id }}/email#outbox" class="text-xs underline text-slate-500 ml-auto">View outbox</a>
+    </div>
+    {% else %}
+    <p class="text-xs text-slate-500">This clarification was stub-sent. See the <a href="/rfx/{{ state.id }}/email#outbox" class="underline">outbox</a> for the stored copy.</p>
+    {% endif %}
+  </form>
   <details>
     <summary class="cursor-pointer text-xs text-slate-500">Open points the engine detected ({{ draft.points|length }})</summary>
     <ul class="mt-2 list-disc pl-5 text-xs text-slate-600 space-y-1">{% for p in draft.points %}<li>{{ p }}</li>{% endfor %}</ul>
   </details>
+  {% else %}
+  <pre class="rounded bg-slate-50 border border-slate-200 p-3 text-sm whitespace-pre-wrap font-sans leading-relaxed">{{ draft.body }}</pre>
   {% endif %}
 {% include "partials/drawer_close.html" %}
