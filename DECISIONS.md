@@ -1,52 +1,27 @@
-# Decisions: what I built, what I left out, and where the real problem is
+# Kill the Quote Spreadsheet — decisions note (one page)
 
-**One page. Written for the reviewer who will drive the live demo.**
+**Prototype:** https://kill-the-quote-spreadsheet-lac.vercel.app  
+**Persona:** category buyer for corrugated packaging (Chakan plant).  
+**Stack:** FastAPI + HTMX, Claude for draft / extract / analyst, deterministic engine for maths, Vercel + Blob.
 
-## The bet
+## What I decided
 
-The spreadsheet does not die because extraction gets good enough. It dies when a buyer with ₹4 crore on the line trusts the screen more than their own retyping. So I optimised for *trust*, not for coverage of formats. Three rules follow from that, and every screen enforces them:
+**Trust over format theatre.** The brief’s messy edges matter more than a clean happy path. Every price must carry verbatim evidence; the model never does arithmetic; uncertainty is a first-class cell state (`ok` / `converted` / `needs review` / `unresolved` / missing). Totals exclude anything unsure unless the buyer overrides with a note.
 
-1. **No value without evidence.** The model may only report a price, term or answer if it can quote the verbatim text it came from and where (cell, page, paragraph, image line). The app then checks the quote against the source; if it is not there, the value is downgraded to *needs review*. The buyer can click any cell and see the cell, the highlighted PDF region, or the photo.
-2. **The model never does arithmetic.** Unit conversion (per 100, per 1,000, per bundle of 20, per kg via a disclosed nominal weight), FX (fixed, dated rate), coverage, rankings, award totals, sensitivity: all in pandas/plain Python. The analyst is a tool-caller; every table under an answer is a raw engine result, and it has a `calculate` tool so even differences and percentages are computed, not recalled.
-3. **Uncertainty is a first-class state, not a footnote.** Cells are `ok`, `converted`, `needs review`, `unresolved` ("same as last year"), `missing`, or `reviewed`. Anything not `ok`/`converted`/`reviewed` is excluded from every total unless the buyer explicitly asks to include it, and every answer ends with machine-generated caveats listing exactly what was excluded and why.
+**Generate replies from the live RFx, then read them for real.** Vendor files are synthesised in fixed ugly formats (Excel-per-100, PDF footnotes, USD Word, angled photo, ₹/kg email) but extraction is a live model call — not hardcoded demo answers. Ask answers are tool-backed engine tables, not recalled prose.
 
-## Choices with no right answer, and why I went the way I did
+**Quality gates at draft time.** The buyer picks gates on the home screen; the questionnaire is generated from those gates plus the brief. Gates are the single Pass/Partial/Fail engine for Compare and for the default award: *cheapest per line among vendors who cleared knockouts* — the VP question in the assignment.
 
-- **Vendor files are generated from the drafted RFx, not pre-canned.** The RFx is genuinely AI-drafted each run, so a static dataset would not match. Generating the five replies in code from whatever the RFx contains also means extraction cannot be tuned to a file. The personalities are fixed (the Excel that ignores the template, the footnote discount, the USD-per-1,000 Word doc, the angled per-bundle photo, the one-line email), the numbers are not.
-- **Per-kg quotes are converted, but loudly.** The email vendor quotes ₹/kg. I convert using an RSC blank-weight formula from the RFx dimensions and GSM, show the formula in the cell, and mark the cell `converted`. The alternative (refuse to compare) would hide the cheapest vendor. The alternative to that (silently convert) would hide the assumption. "Rest same as last year" is `unresolved`: we do not have last year, so we do not invent it.
-- **Questionnaire gate is strict.** A vendor is *cleared* only if every knockout question has a clear pass. Unanswered is *incomplete*, not failed, and incomplete vendors are excluded from "cleared-only" awards but shown everywhere else. The photo vendor answered nothing; the analyst says so rather than guessing.
-- **Freight and conditional discounts are never auto-applied.** They are extracted, flagged on the vendor header, listed in caveats, and applied only when the buyer asks ("apply conditional discounts"). Applying a 5%-above-₹25-lakh footnote automatically is exactly how spreadsheets lie.
-- **Buyer overrides are allowed and logged.** A buyer who called the vendor can accept or override a flagged cell with a mandatory note. It shows as `reviewed`, in a different colour, and in the export's review log. Trust includes being able to see where a human intervened.
-- **FastAPI, not Streamlit; Vercel, not Cloudflare.** The brief suggested Streamlit. I switched so the demo could be a permanent public URL on a free plan: Streamlit's persistent websocket server does not fit Vercel's request model, and Cloudflare cannot host it at all without a paid container plan. Server-rendered HTML with HTMX also made the evidence drawer and per-cell interactions cheap.
-- **Claude Sonnet for everything, one wrapper.** Vision handles the photo (no Tesseract to deploy), forced tool calls give strict JSON, tool use gives the analyst. Every call is logged (purpose, tokens, latency) on an "AI call log" page so a reviewer can see there are exactly N calls and what each was for.
+**Freeze before you defend.** Award freeze locks strategy, line awards, totals, notices and regrets to a calculation snapshot. Later re-reads or exception overrides make that freeze historical so an old memo cannot sit next to new totals.
+
+**Exceptions are a workflow, not a colour.** Needs-review / unresolved / gate failures open on an Exceptions tab: buyer override, or send to a manager for stubbed approval. Approved clears feed back into gates and reviews.
+
+**Email is the channel, stubbed on purpose.** Outbound RFx, clarifications (editable drafts), award/regret notices, and internal stakeholder alerts all land in Outbox with no real SMTP — per the brief’s “stub the plumbing, don’t fake the AI loops.”
 
 ## What I deliberately left out
 
-Real email (stubbed to an Outbox), vendor portal/logins, ERP hand-off, payments, multi-user roles, retries/queues for long extractions (each vendor is read in one request; a production system would queue), private file storage (synthetic data, public random-path blobs), and any hardcoding of demo answers. I also did not build a "template" for vendors: the whole point is that they never follow it.
+Real SMTP and vendor portals; inventing “same as last year” prices; auto-applying footnote discounts or missing freight as zero; multi-buyer auth / ERP hand-off; private blob ACLs (synthetic demo data); guaranteeing sub-4s live reads of five documents (physics of five parallel API calls). Also removed interview chrome (lifecycle/demo strips) so the buyer UI stays the product, not the rehearsal tooling.
 
-## Where the interesting problem actually is
+## Where the interesting problem is
 
-Extraction is now a commodity; a good model reads the angled photo. The hard part is **row matching under ambiguity and the buyer's decision under partial data**. Two RFx lines share a size and differ only in print; a vendor row omits the print. Was it a quote for line 1, line 2, or both? The system's honest answer is "candidates: 1, 2; needs review", and the product question is how much of that ambiguity a buyer will tolerate before they reopen Excel. My answer here: show the ambiguity, make resolving it one click with an audit trail, and draft the clarification email for them. The next thing I would build is not a better parser; it is a vendor-side "confirm these 4 mappings" link that closes the loop without anyone retyping anything.
-
-
-## Snapshot consistency (added for the take-home fix)
-
-The prototype had a data-consistency defect: an analyst answer saved before all vendors finished processing stayed labelled as the award recommendation even after later vendors landed and the live Award totals changed.
-
-**Decision:** introduce an explicit vendor-data version + calculation snapshot layer (see `core/snapshots.py`) rather than hiding old answers or recomputing them in place. Historical answers remain for audit, clearly labelled stale, with a one-click rerun. Saves of stale answers are blocked. Exports are stamped with the same snapshot id shown on the Award page.
-
-**Deliberately left out of this fix:** multi-user locking beyond optimistic version checks, a full event-sourced store, and hard-coded demo totals.
-
-## Phases 1–3 upgrade (trust, gates, freeze, demo) — 2026-09-20
-
-Ported the useful Cloudflare RFx Desk ideas into this Vercel app without copying its contradictory UI.
-
-**What changed and why**
-
-1. **Exclusion SSOT** (`core/awardability.py`): Compare, Ask, and Award all read the same exclusion summary from one annotated comparison. Assumed / not_quoted / conversion_failed cells are labelled on the grid and never silently enter totals or a freeze.
-2. **Quality gates** (`core/gates.py`): Pass / Partial / Fail from the knockout questionnaire — one engine, used by Compare badges and the default award strategy. Default award is **quality-gated cheapest-per-line** (the VP question in the brief).
-3. **Freeze pack** (`core/freeze.py`): Immutable pack bound to calculation snapshot id + vendor data version; notices + regrets + memo + xlsx zipped. Later vendor edits mark the freeze historical via existing version bumps. Assumed cells require explicit confirm to enter a freeze.
-4. **Demo safety** (`core/demo_ops.py`): Demo mode blocks regenerate/wipe; Interview reset restores a **messy** golden seed (partial 27/30, USD/FX, photo per-box, per-kg email, unresolved “same as last year”, incomplete questionnaires) with one fresh Ask answer + recommendation stamped to the current snapshot.
-5. **Edge callouts** (`core/edge_callouts.py`): First-class banners on Compare/Award for partial coverage, FX, per-kg, photo confidence, freight-extra, gate Partial/Fail — not footnotes.
-
-**Deliberately still left out:** multi-user locking, real SMTP, inventing “last year” prices, auto-applying footnote discounts or missing freight as zero.
+Extraction is increasingly commodity. The hard product problem is **row matching under ambiguity and awarding under partial data** — and making the buyer’s next action obvious (evidence click, clarification email, exception override, freeze). The next thing I would build is not a better parser; it is a vendor-side “confirm these mappings” loop that closes the gap without anyone reopening Excel.
