@@ -5,12 +5,15 @@ States (per quote cell):
   assumed           — a number exists only because of a soft assumption
                       (currency assumed, ambiguous line map with candidate).
                       NEVER enters a frozen award without explicit confirm.
+  needs_review      — ambiguous / alternate / unverified, but NOT a soft
+                      assumption. Excluded until the buyer reviews.
+  unresolved        — refers to data we do not have ("same as last year")
   not_quoted        — vendor did not quote the line
-  conversion_failed — quoted but could not be normalised to INR/pc, or
-                      refers to data we do not have ("same as last year")
+  conversion_failed — quoted but could not be normalised to INR/pc
 
-Failed conversions never silently enter totals. Assumed cells stay visible
-with a loud chip and are excluded from freeze unless confirmed.
+Failed conversions and unresolved references never silently enter totals.
+Assumed and needs-review cells stay visible with loud chips and are
+excluded from freeze unless confirmed / reviewed.
 """
 from __future__ import annotations
 
@@ -18,6 +21,15 @@ from . import engine
 from .gates import evaluate_gates
 
 ASSUMED_FLAGS = {"currency_assumed", "pack_size_unknown", "weight_unknown", "basis_unknown"}
+
+# Buyer-facing labels for exclusion headline parts (only non-zero parts shown).
+EXCLUSION_LABELS = {
+    "assumed": "assumed",
+    "needs_review": "needs review",
+    "unresolved": "unresolved",
+    "conversion_failed": "conversion failed",
+    "not_quoted": "not quoted",
+}
 
 
 def cell_awardability(cell: dict) -> dict:
@@ -39,7 +51,7 @@ def cell_awardability(cell: dict) -> dict:
 
     if status == "unresolved":
         return {
-            "awardability": "conversion_failed",
+            "awardability": "unresolved",
             "include_in_totals": False,
             "may_freeze": False,
             "label": "Unresolved",
@@ -47,9 +59,9 @@ def cell_awardability(cell: dict) -> dict:
         }
 
     if status == "needs_review":
-        # Candidate value present → assumed (buyer can confirm); else conversion failed
+        # Soft assumption / confirmable candidate → assumed
         candidate = cell.get("unit_inr_candidate")
-        if candidate is not None or (unit is not None and flags & ASSUMED_FLAGS):
+        if candidate is not None or (flags & ASSUMED_FLAGS):
             return {
                 "awardability": "assumed",
                 "include_in_totals": False,
@@ -57,7 +69,7 @@ def cell_awardability(cell: dict) -> dict:
                 "label": "Assumed — confirm to use",
                 "buyer_note": reason or conversion or "Value rests on an assumption; confirm before award.",
             }
-        if unit is None:
+        if unit is None and candidate is None:
             return {
                 "awardability": "conversion_failed",
                 "include_in_totals": False,
@@ -65,8 +77,9 @@ def cell_awardability(cell: dict) -> dict:
                 "label": "Conversion failed",
                 "buyer_note": reason or conversion or "Quoted but could not convert to INR per piece.",
             }
+        # Ambiguous / alternate / unverified — not an assumption
         return {
-            "awardability": "assumed",
+            "awardability": "needs_review",
             "include_in_totals": False,
             "may_freeze": False,
             "label": "Needs review",
@@ -102,10 +115,31 @@ def cell_awardability(cell: dict) -> dict:
     }
 
 
+def _headline(counts: dict, excluded_n: int, coverage_gaps: list) -> str:
+    """Build exclusion headline from non-zero awardability buckets only."""
+    parts = []
+    for key in ("assumed", "needs_review", "unresolved", "conversion_failed", "not_quoted"):
+        n = counts.get(key, 0)
+        if n:
+            parts.append(f"{n} {EXCLUSION_LABELS[key]}")
+    detail = ", ".join(parts) if parts else "none"
+    return (
+        f"{excluded_n} cells excluded from totals ({detail}) · "
+        f"{len(coverage_gaps)} lines with no awardable quote"
+    )
+
+
 def annotate_comparison(cmp: dict) -> dict:
     """Attach awardability to every cell; return exclusion SSOT + blockers."""
     blockers: list[dict] = []
-    counts = {"awardable": 0, "assumed": 0, "not_quoted": 0, "conversion_failed": 0}
+    counts = {
+        "awardable": 0,
+        "assumed": 0,
+        "needs_review": 0,
+        "unresolved": 0,
+        "not_quoted": 0,
+        "conversion_failed": 0,
+    }
     exclusions: list[dict] = []
 
     for ln in cmp["lines"]:
@@ -129,7 +163,7 @@ def annotate_comparison(cmp: dict) -> dict:
                         "flags": list(cell.get("flags") or []),
                     }
                 )
-            if a["awardability"] in ("assumed", "conversion_failed"):
+            if a["awardability"] in ("assumed", "needs_review", "conversion_failed", "unresolved"):
                 blockers.append(
                     {
                         "kind": a["awardability"],
@@ -164,7 +198,7 @@ def annotate_comparison(cmp: dict) -> dict:
                     "vendor_id": None,
                     "vendor": None,
                     "label": "No awardable quote",
-                    "detail": "Every vendor is missing, unresolved, assumed, or failed conversion on this line.",
+                    "detail": "Every vendor is missing, unresolved, assumed, needs review, or failed conversion on this line.",
                     "sku": ln.get("sku"),
                     "description": ln.get("description"),
                 }
@@ -177,16 +211,12 @@ def annotate_comparison(cmp: dict) -> dict:
     cmp["exclusion_summary"] = {
         "excluded_cells": len(exclusions),
         "assumed": counts.get("assumed", 0),
+        "needs_review": counts.get("needs_review", 0),
+        "unresolved": counts.get("unresolved", 0),
         "not_quoted": counts.get("not_quoted", 0),
         "conversion_failed": counts.get("conversion_failed", 0),
         "coverage_gaps": len(coverage_gaps),
-        "headline": (
-            f"{len(exclusions)} cells excluded from totals "
-            f"({counts.get('assumed', 0)} assumed, "
-            f"{counts.get('conversion_failed', 0)} conversion failed, "
-            f"{counts.get('not_quoted', 0)} not quoted) · "
-            f"{len(coverage_gaps)} lines with no awardable quote"
-        ),
+        "headline": _headline(counts, len(exclusions), coverage_gaps),
     }
     return cmp
 

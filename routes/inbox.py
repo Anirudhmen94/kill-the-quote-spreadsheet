@@ -42,16 +42,16 @@ def simulate(request: Request, rfx_id: str):
 
 
 @router.post("/rfx/{rfx_id}/upload", response_class=HTMLResponse)
-async def upload(request: Request, rfx_id: str, vendor_id: str = Form(""), new_vendor_name: str = Form(""), files: list[UploadFile] = File(...)):
+async def upload(request: Request, rfx_id: str, new_vendor_name: str = Form(""), files: list[UploadFile] = File(...)):
+    """Create a new vendor from name + files. Attach-to-existing was removed from the UI."""
     state = load_or_404(rfx_id)
     if not files or all(not f.filename for f in files):
         return error_fragment("Choose at least one file.", 400)
-    if vendor_id:
-        vendor = _vendor(state, vendor_id)
-    else:
-        name = new_vendor_name.strip() or f"Vendor {len(state['vendors']) + 1}"
-        vendor = vendor_sim.empty_vendor({"vendor_id": "v" + uuid.uuid4().hex[:5], "name": name, "city": "", "email": "", "format": "upload"})
-        state["vendors"].append(vendor)
+    name = (new_vendor_name or "").strip()
+    if not name:
+        return error_fragment("Enter a vendor name.", 400)
+    vendor = vendor_sim.empty_vendor({"vendor_id": "v" + uuid.uuid4().hex[:5], "name": name, "city": "", "email": "", "format": "upload"})
+    state["vendors"].append(vendor)
     for f in files:
         if not f.filename:
             continue
@@ -60,7 +60,11 @@ async def upload(request: Request, rfx_id: str, vendor_id: str = Form(""), new_v
             return error_fragment(f"{f.filename} is larger than 25 MB.", 400)
         kind = ingest.kind_from_name(f.filename)
         if kind == "unknown":
-            return error_fragment(f"Unsupported file type: {f.filename}. Use xlsx, pdf, docx, jpg/png, eml/txt or csv.", 400)
+            return error_fragment(
+                f"Unsupported file type: {f.filename}. "
+                "Use Excel (.xlsx/.xls), PDF, Word (.docx), images (.png/.jpg/.webp/.gif), email (.eml/.txt/.msg), or CSV.",
+                400,
+            )
         fid = uuid.uuid4().hex[:8]
         url = storage.put_bytes(f"rfx/{rfx_id}/files/{vendor['vendor_id']}/{fid}-{f.filename}", data, ingest.guess_content_type(f.filename))
         vendor["files"].append({"file_id": fid, "name": f.filename, "kind": kind, "content_type": ingest.guess_content_type(f.filename), "url": url, "size": len(data), "role": "quote"})

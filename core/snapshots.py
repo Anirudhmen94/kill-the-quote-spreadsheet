@@ -413,20 +413,42 @@ def processing_counts(state: dict) -> dict:
 
 
 def unresolved_summary(state: dict) -> dict:
-    """Counts of review/unresolved/missing across extracted vendors (from live comparison)."""
+    """Cell-level exclusion counts — same SSOT language as Compare/Award banner.
+
+    Uses awardability annotation so "needs review" is never relabelled "assumed"
+    and excluded counts are cells (not lines).
+    """
     if not any(v.get("extraction") for v in state.get("vendors", [])):
-        return {"needs_review": 0, "unresolved": 0, "missing": 0, "excluded_from_totals": 0}
+        return {
+            "needs_review": 0,
+            "unresolved": 0,
+            "missing": 0,
+            "assumed": 0,
+            "conversion_failed": 0,
+            "excluded_from_totals": 0,
+            "headline": "0 cells excluded from totals (none) · 0 lines with no awardable quote",
+        }
+    # Local import avoids cycle at module load
+    from . import awardability
+
     cmp = engine.build_comparison(state)
-    needs_review = unresolved = missing = 0
+    awardability.annotate_comparison(cmp)
+    ex = cmp["exclusion_summary"]
+    status_needs = status_unresolved = status_missing = 0
     for v in cmp["vendors"]:
-        needs_review += v["counts"].get("needs_review", 0)
-        unresolved += v["counts"].get("unresolved", 0)
-        missing += v["counts"].get("missing", 0)
+        status_needs += v["counts"].get("needs_review", 0)
+        status_unresolved += v["counts"].get("unresolved", 0)
+        status_missing += v["counts"].get("missing", 0)
     return {
-        "needs_review": needs_review,
-        "unresolved": unresolved,
-        "missing": missing,
-        "excluded_from_totals": needs_review + unresolved,
+        # Status-grid counts (for export meta / inbox)
+        "needs_review": status_needs,
+        "unresolved": status_unresolved,
+        "missing": status_missing,
+        # Awardability buckets (SSOT with exclusion banner)
+        "assumed": ex.get("assumed", 0),
+        "conversion_failed": ex.get("conversion_failed", 0),
+        "excluded_from_totals": ex["excluded_cells"],
+        "headline": ex["headline"],
     }
 
 
@@ -511,11 +533,12 @@ def data_status(state: dict, context: str = "global", answer: dict | None = None
     elif n_proc:
         base += f" · {n_proc} of {counts['with_files']} responses processed"
     if unresolved["excluded_from_totals"]:
+        # Cell-level wording — same SSOT headline as the Compare/Award exclusion banner
         return {
             "kind": "current_unresolved",
             "level": "info",
             "label": "Current with unresolved items",
-            "text": f"{base} · {unresolved['excluded_from_totals']} lines excluded from totals",
+            "text": f"{base} · {unresolved['headline']}",
             "version": ver,
             "updated_at": updated_at,
             "counts": counts,

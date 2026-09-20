@@ -224,6 +224,11 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
     q1[4]["status"] = "needs_review"
     q1[4]["reason"] = "Alternate flute offered (B instead of BC); price is for the alternate spec."
     q1[4]["candidate_line_nos"] = [5]
+    # Soft assumption — ambiguous line map with a confirmable candidate (distinct from needs-review)
+    q1[7]["line_no"] = None
+    q1[7]["candidate_line_nos"] = [8]
+    q1[7]["status"] = "needs_review"
+    q1[7]["reason"] = "Ambiguous row mapping; candidate price shown — confirm before award."
     v1["extraction"] = _ext(
         q1,
         [],

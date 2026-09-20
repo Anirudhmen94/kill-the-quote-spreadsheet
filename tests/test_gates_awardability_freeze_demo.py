@@ -27,9 +27,15 @@ def test_awardability_excludes_ugly_edges():
     st = demo_ops.build_golden_seed()
     cmp = awardability.enrich_state_comparison(st)
     ex = cmp["exclusion_summary"]
-    assert ex["assumed"] >= 1  # Sri Balaji alternate
-    assert ex["conversion_failed"] >= 1  # Ganesh unresolved
+    assert ex["needs_review"] >= 1  # Sri Balaji alternate flute
+    assert ex["assumed"] >= 1  # Sri Balaji currency assumed
+    assert ex["unresolved"] >= 1  # Ganesh same-as-last-year
     assert ex["not_quoted"] >= 1  # Kraftline / Meghna gaps
+    # Headline must not relabel needs-review as assumed, or unresolved as conversion-failed
+    assert "needs review" in ex["headline"]
+    assert "assumed" in ex["headline"]
+    assert "unresolved" in ex["headline"]
+    assert "conversion failed" not in ex["headline"] or ex["conversion_failed"] > 0
     # Every excluded cell must carry a buyer-facing reason
     assert all(e.get("reason") for e in cmp["exclusions"])
     # Assumed never may_freeze
@@ -41,6 +47,15 @@ def test_awardability_excludes_ugly_edges():
     ]
     assert assumed_cells
     assert all(not c.get("may_freeze") for c in assumed_cells)
+    # Needs-review cells are their own bucket, not assumed
+    nr_cells = [
+        ln["cells"][v["vendor_id"]]
+        for ln in cmp["lines"]
+        for v in cmp["vendors"]
+        if ln["cells"][v["vendor_id"]].get("awardability") == "needs_review"
+    ]
+    assert nr_cells
+    assert all(c.get("status") == "needs_review" for c in nr_cells)
 
 
 def test_quality_gated_live_matches_compare_exclusions():
@@ -111,7 +126,7 @@ def test_interview_reset_restores_messy_seed_and_clears_stale_ask():
     # Messy edges still present
     cmp = awardability.enrich_state_comparison(fresh)
     assert cmp["exclusion_summary"]["not_quoted"] >= 1
-    assert cmp["exclusion_summary"]["conversion_failed"] >= 1
+    assert cmp["exclusion_summary"]["unresolved"] >= 1  # Ganesh same-as-last-year
     assert any(v["gate"] == "Partial" for v in cmp["vendors"])
 
 
@@ -134,6 +149,76 @@ def test_compare_ask_award_share_exclusion_ssot():
     assert cmp["exclusion_summary"]["headline"] == live["exclusion_summary"]["headline"]
     # Seeded Ask answer caveats mention the exclusion headline
     assert any(cmp["exclusion_summary"]["headline"] in (c or "") for c in st["chat"][0].get("caveats", []))
+
+
+
+def test_kraftline_coverage_chip_adds_to_line_count():
+    """Partial-quote chip math: usable + review + unresolved + not_quoted == 30."""
+    from core import edge_callouts
+
+    st = demo_ops.build_golden_seed()
+    cmp = awardability.enrich_state_comparison(st)
+    kraft = next(v for v in cmp["vendors"] if "Kraftline" in v["name"])
+    parts = edge_callouts.vendor_coverage_parts(kraft, cmp["line_count"])
+    assert parts["sums_to_total"]
+    assert parts["usable"] + parts["needs_review"] + parts["unresolved"] + parts["not_quoted"] == 30
+    assert parts["quoted"] == parts["usable"] + parts["needs_review"] + parts["unresolved"]
+    assert parts["usable"] == 27
+    assert parts["not_quoted"] == 3
+    text = edge_callouts.coverage_chip_text(kraft["name"], parts)
+    assert "27 usable" in text and "27 quoted" in text and "3 not quoted" in text
+    # Must not claim "quoted 27/30 (3 not quoted)" without usable/review breakdown when review>0
+    # (here review=0 so quoted==usable is fine)
+
+
+def test_exclusion_banner_labels_map_true_states():
+    st = demo_ops.build_golden_seed()
+    cmp = awardability.enrich_state_comparison(st)
+    ex = cmp["exclusion_summary"]
+    # Fake a bulk needs-review mislabel scenario is impossible now: headline uses buckets
+    assert ex["needs_review"] == sum(
+        1 for e in cmp["exclusions"] if e["awardability"] == "needs_review"
+    )
+    assert ex["assumed"] == sum(1 for e in cmp["exclusions"] if e["awardability"] == "assumed")
+    assert ex["unresolved"] == sum(1 for e in cmp["exclusions"] if e["awardability"] == "unresolved")
+    # Status strip uses the same headline (cell-level, not "N lines excluded")
+    from core import snapshots
+
+    ds = snapshots.data_status(st, context="compare")
+    assert "cells excluded from totals" in ds["text"]
+    assert "lines excluded from totals" not in ds["text"]
+    assert ex["headline"] in ds["text"]
+
+
+def test_meghna_angled_photo_callout_on_compare_and_award():
+    from core import edge_callouts
+
+    st = demo_ops.build_golden_seed()
+    cmp = awardability.enrich_state_comparison(st)
+    callouts = edge_callouts.edge_callouts(cmp)
+    photo = [c for c in callouts if c["kind"] == "angled_photo"]
+    assert photo, "Meghna angled phone / rate card photo must be a first-class callout"
+    assert any("angled phone photo" in c["text"].lower() and "rate card" in c["text"].lower() for c in photo)
+    # Low-confidence / per-pack chips also name the photo source
+    meghna_texts = [c["text"].lower() for c in callouts if c.get("vendor") and "Meghna" in (c.get("vendor") or "")]
+    assert any("angled phone" in t or "rate card" in t for t in meghna_texts)
+
+
+def test_award_and_compare_share_edge_callouts():
+    """Award must not truncate edges that Compare shows (same helper, full list)."""
+    from core import edge_callouts
+
+    st = demo_ops.build_golden_seed()
+    cmp = awardability.enrich_state_comparison(st)
+    callouts = edge_callouts.edge_callouts(cmp)
+    kinds = {c["kind"] for c in callouts}
+    # Ganesh unresolved + per-kg + Meghna photo/low-conf must all be present
+    assert "unresolved" in kinds
+    assert "per_kg" in kinds
+    assert "low_confidence" in kinds or "angled_photo" in kinds
+    assert "angled_photo" in kinds
+    # No silent truncation — Award template iterates the full list
+    assert len(callouts) > 6
 
 
 if __name__ == "__main__":

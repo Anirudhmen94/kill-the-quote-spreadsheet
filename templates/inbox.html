@@ -55,16 +55,23 @@
 
 <details class="mt-8 rounded-lg border border-slate-200 bg-white">
   <summary class="cursor-pointer px-4 py-3 font-medium">Upload a vendor's files yourself</summary>
-  <form hx-post="/rfx/{{ state.id }}/upload" hx-encoding="multipart/form-data" hx-target="#upload-msg" class="px-4 pb-4 grid sm:grid-cols-3 gap-3 text-sm">
-    <label class="block">Attach to vendor
-      <select name="vendor_id" class="mt-1 w-full rounded border border-slate-300 p-2">
-        <option value="">New vendor…</option>
-        {% for v in state.vendors %}<option value="{{ v.vendor_id }}">{{ v.name }}</option>{% endfor %}
-      </select>
+  <form hx-post="/rfx/{{ state.id }}/upload" hx-encoding="multipart/form-data" hx-target="#upload-msg" class="px-4 pb-4 grid sm:grid-cols-2 gap-3 text-sm">
+    <label class="block">Vendor name
+      <input name="new_vendor_name" required class="mt-1 w-full rounded border border-slate-300 p-2" placeholder="e.g. Sri Balaji Packaging">
     </label>
-    <label class="block">New vendor name <input name="new_vendor_name" class="mt-1 w-full rounded border border-slate-300 p-2" placeholder="Only if 'New vendor'"></label>
-    <label class="block">Files (xlsx, pdf, docx, jpg/png, eml/txt, csv) <input type="file" name="files" multiple required class="mt-1 w-full text-sm"></label>
-    <div class="sm:col-span-3 flex items-center gap-3">
+    <label class="block">
+      <span class="inline-flex items-center gap-1">
+        Files
+        <span class="relative group inline-flex" tabindex="0" title="Excel (.xlsx/.xlsm/.xls), PDF, Word (.docx), images (.png/.jpg/.jpeg/.webp/.gif), email (.eml/.txt/.msg), CSV">
+          <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-semibold text-slate-600 cursor-help" aria-label="Accepted file types">?</span>
+          <span role="tooltip" class="pointer-events-none absolute left-1/2 top-full z-20 mt-1 hidden w-64 -translate-x-1/2 rounded-md border border-slate-200 bg-white p-2 text-[11px] font-normal text-slate-700 shadow-lg group-hover:block group-focus:block group-focus-within:block">
+            Accepted: Excel (.xlsx/.xlsm/.xls), PDF, Word (.docx), images (.png/.jpg/.jpeg/.webp/.gif), email (.eml/.txt/.msg), CSV
+          </span>
+        </span>
+      </span>
+      <input type="file" name="files" multiple required accept=".xlsx,.xlsm,.xls,.pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.eml,.txt,.msg,.csv" class="mt-1 w-full text-sm" title="Excel (.xlsx/.xlsm/.xls), PDF, Word (.docx), images (.png/.jpg/.jpeg/.webp/.gif), email (.eml/.txt/.msg), CSV">
+    </label>
+    <div class="sm:col-span-2 flex items-center gap-3">
       <button class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium">Upload</button>
       <span id="upload-msg"></span>
     </div>

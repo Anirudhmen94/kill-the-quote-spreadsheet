@@ -316,6 +316,7 @@ def build_comparison(state: dict) -> dict:
                 "name": v["name"],
                 "city": v.get("city"),
                 "status": v.get("status"),
+                "format": v.get("format"),
                 "files": v.get("files", []),
                 "counts": counts,
                 "usable": len(usable_lines),

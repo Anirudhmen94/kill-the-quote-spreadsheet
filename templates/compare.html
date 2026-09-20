@@ -42,7 +42,7 @@
 {% if exclusion_summary %}
 <div class="mt-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
   <strong>Excluded from every total</strong> · {{ exclusion_summary.headline }}
-  <div class="text-xs mt-1 opacity-90">Assumed cells never enter a frozen award without confirm. Conversion failures and unresolved references stay visible and out of money.</div>
+  <div class="text-xs mt-1 opacity-90">Assumed cells never enter a frozen award without confirm. Needs-review, unresolved, and conversion-failed cells stay visible and out of money.</div>
 </div>
 {% endif %}
 
@@ -129,8 +129,8 @@
               {% else %}<span>not quoted</span>{% endif %}
               {% if c.flags %}<div class="text-[10px] font-normal text-slate-500 leading-tight">{{ c.flags|reject('equalto','currency_from_terms')|join(', ')|replace('_',' ') }}</div>{% endif %}
               {% if c.awardability and c.awardability != 'awardable' %}<div class="text-[10px] font-semibold leading-tight
-                {% if c.awardability == 'assumed' %}text-amber-700
-                {% elif c.awardability == 'conversion_failed' %}text-rose-700
+                {% if c.awardability == 'assumed' or c.awardability == 'needs_review' %}text-amber-700
+                {% elif c.awardability == 'conversion_failed' or c.awardability == 'unresolved' %}text-rose-700
                 {% else %}text-slate-500{% endif %}">{{ c.awardability_label }}</div>{% endif %}
               {% if c.conversion and c.status == 'converted' %}<div class="text-[10px] font-normal text-sky-700 leading-tight truncate max-w-[120px]" title="{{ c.conversion }}">{{ c.conversion }}</div>{% endif %}
             </button>
