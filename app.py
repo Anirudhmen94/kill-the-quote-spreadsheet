@@ -37,19 +37,29 @@ async def unhandled_error(request: Request, exc: Exception):
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
+    from core import event_status
+
     events = []
     # Phase D demo hygiene: prefer a single clean fully-processed demo event on the home list.
     for rid in storage.list_rfx_ids()[:12]:
         st = storage.load_state(rid)
         if st:
+            disp = event_status.derive_event_display_status(st)
+            extracted_n = sum(1 for v in st.get("vendors", []) if v.get("status") == "extracted")
+            excluded_n = sum(1 for v in st.get("vendors", []) if v.get("status") == "excluded")
             events.append(
                 {
                     "id": rid,
                     "title": st["rfx"].get("title", "Untitled RFx"),
                     "created_at": st.get("created_at", ""),
-                    "status": st.get("status", "draft"),
+                    "status": disp["key"],
+                    "status_label": disp["label"],
+                    "status_key": disp["key"],
                     "vendors": len(st.get("vendors", [])),
-                    "extracted": sum(1 for v in st.get("vendors", []) if v.get("status") == "extracted"),
+                    "extracted": extracted_n,
+                    "excluded": excluded_n,
+                    "is_golden_seed": bool(st.get("is_golden_seed")),
+                    "demo_mode": bool(st.get("demo_mode")),
                 }
             )
     # Keep at most one golden/demo seed on the home list (newest), plus non-demo events.

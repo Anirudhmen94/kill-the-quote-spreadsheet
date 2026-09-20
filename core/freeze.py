@@ -343,15 +343,20 @@ def repair_historical_freezes(state: dict) -> list[dict]:
             _append_freeze_audit(state, detail)
             repairs.append(detail)
 
-    # Keep state["freeze"] pointer consistent
+    # Keep state["freeze"] pointer consistent; clear misleading award_frozen raw status
     cur = state.get("freeze")
-    if cur and cur.get("integrity") == "invalid_historical_freeze":
-        pass
-    elif cur and cur.get("id"):
+    if cur and cur.get("id"):
         for p in state.get("freeze_packs") or []:
             if p.get("id") == cur.get("id"):
                 state["freeze"] = p
+                cur = p
                 break
+    if cur and (
+        cur.get("integrity") == "invalid_historical_freeze"
+        or cur.get("status") == "requires_review"
+    ):
+        if state.get("status") == "award_frozen":
+            state["status"] = "freeze_requires_review"
     return repairs
 
 
@@ -718,6 +723,18 @@ def refresh_freeze_staleness(state: dict) -> None:
         pass
 
 
+
+def freeze_validity(pack: dict | None) -> str | None:
+    """Delegate to event_status (authoritative FreezeValidity)."""
+    from . import event_status
+    return event_status.freeze_validity(pack)
+
+
+def is_active_valid_freeze(pack: dict | None) -> bool:
+    from . import event_status
+    return event_status.is_active_valid_freeze(pack)
+
+
 def current_freeze(state: dict) -> dict | None:
     """Return current frozen pack after staleness refresh + historical repair."""
     refresh_freeze_staleness(state)
@@ -737,9 +754,16 @@ def current_freeze(state: dict) -> dict | None:
 
 def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
     """Zip memo + xlsx + notices/regrets clearly linked to the freeze snapshot."""
+    from . import event_status
+
     pack = pack or current_freeze(state)
     if not pack:
         raise ValueError("No frozen award pack to export.")
+    if not event_status.is_active_valid_freeze(pack):
+        raise ValueError(
+            "Final freeze pack export disabled — this freeze requires review "
+            "(invalid historical complete freeze)."
+        )
 
     memo_lines = [
         f"# Frozen award pack — {state['rfx'].get('title', state['id'])}",

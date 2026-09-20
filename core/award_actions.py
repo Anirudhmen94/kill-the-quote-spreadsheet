@@ -48,11 +48,20 @@ def _append_outbox(state: dict, entry: dict) -> None:
 
 
 def _pack_or_raise(state: dict) -> dict:
-    pack = freeze.current_freeze(state)
+    from . import event_status
+
+    pack = event_status.active_valid_freeze(state)
     if not pack:
-        packs = state.get("freeze_packs") or []
-        pack = packs[-1] if packs else None
-    if not pack:
+        # Surface why if an invalid historical freeze is present
+        latest = event_status.latest_relevant_freeze(state)
+        if latest and event_status.freeze_validity(latest) in (
+            event_status.VALIDITY_REQUIRES_REVIEW,
+            event_status.VALIDITY_INVALID_HISTORICAL,
+        ):
+            raise ValueError(
+                "Notices disabled — freeze requires review (invalid historical complete freeze). "
+                "Create a replacement recommendation first."
+            )
         raise ValueError("Freeze an award first before sending notices.")
     return pack
 

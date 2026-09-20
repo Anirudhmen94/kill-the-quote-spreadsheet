@@ -10,4 +10,10 @@
     <a href="{{ audit_strip.links.ai_log }}" class="underline hover:text-slate-900">AI log</a>
   </span>
 </div>
+{% if audit_strip.invalid_historical %}
+<div class="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-950" data-testid="audit-invalid-historical">
+  Invalid historical complete freeze preserved for audit — notices and final packs disabled.
+  <a href="{{ audit_strip.links.ai_log }}" class="underline ml-1">AI / audit log</a>
+</div>
+{% endif %}
 {% endif %}

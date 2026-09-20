@@ -398,19 +398,33 @@ def processing_counts(state: dict) -> dict:
     extracted = [v for v in with_files if v.get("status") == "extracted"]
     extracting = [v for v in with_files if v.get("status") == "extracting"]
     failed = [v for v in with_files if v.get("status") == "error"]
-    pending = [v for v in with_files if v.get("status") in ("received", "awaiting") or (v.get("files") and v.get("status") not in ("extracted", "extracting", "error"))]
+    excluded = [v for v in with_files if v.get("status") == "excluded"]
+    done_statuses = ("extracted", "extracting", "error", "excluded")
+    pending = [
+        v
+        for v in with_files
+        if v.get("status") in ("received", "awaiting")
+        or (v.get("files") and v.get("status") not in done_statuses)
+    ]
     awaiting_reply = [v for v in vendors if not v.get("files")]
+    terminal_ok = len(extracted) + len(excluded)
     return {
         "total_vendors": len(vendors),
         "with_files": len(with_files),
         "extracted": len(extracted),
         "extracting": len(extracting),
         "failed": len(failed),
+        "excluded": len(excluded),
         "pending": len(pending),
         "awaiting_reply": len(awaiting_reply),
         "processing": len(extracting) + len(pending),
-        "all_terminal": len(with_files) > 0 and len(extracting) == 0 and len(pending) == 0,
+        "all_terminal": len(with_files) > 0 and len(extracting) == 0 and len(pending) == 0 and len(failed) == 0,
         "all_extracted": len(with_files) > 0 and len(extracted) == len(with_files),
+        "clean_terminal": len(with_files) > 0
+        and terminal_ok == len(with_files)
+        and len(failed) == 0
+        and len(extracting) == 0
+        and len(pending) == 0,
     }
 
 

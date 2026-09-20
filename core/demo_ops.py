@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from . import awardability, engine, freeze, gates, rfx_drafter, snapshots
+from . import awardability, engine, freeze, gates, rfx_drafter, snapshots, vendor_extraction
 
 DEMO_PROMPTS = [
     "What if we split it, cheapest per line, but only among vendors who cleared the quality questionnaire?",
@@ -380,12 +380,25 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
 
     state["vendors"] = [v1, v2, v3, v4, v5]
     snapshots.ensure_snapshot_fields(state)
+    # Explicit extraction_status so demo never shows lingering failed_no_previous
+    for v in state["vendors"]:
+        vendor_extraction.set_extracted(v, version=0)
+        # Ensure no residual failure flags
+        blob = v.get("extraction_status") or {}
+        blob["technical_error"] = None
+        blob["buyer_message"] = None
+        v["error"] = None
+        v["status"] = "extracted"
     snapshots.bump_vendor_data_version(
         state,
         "vendor_extracted",
         affected_vendor_ids=["v1", "v2", "v3", "v4", "v5"],
         notice="Interview reset · golden messy seed loaded (5 vendor replies)",
     )
+    # Stamp last_success_version after bump
+    ver = snapshots.current_version(state)
+    for v in state["vendors"]:
+        vendor_extraction.set_extracted(v, version=ver)
 
     # Engine-computed recommendation bound to a real snapshot (not a fake LLM answer)
     cmp = awardability.enrich_state_comparison(state)
@@ -443,6 +456,34 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
     state["chat"] = [answer]
     snapshots.save_recommendation_from_answer(state, answer, 0)
     state["status"] = "compared"
+    # Demo terminal: 5/5 successfully processed (never 4 processed + 1 failed)
+    for v in state["vendors"]:
+        st = vendor_extraction.get_status(v)
+        if st in (
+            vendor_extraction.STATUS_FAILED_NO_PREVIOUS,
+            vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+            vendor_extraction.STATUS_AWAITING,
+            vendor_extraction.STATUS_EXTRACTING,
+        ):
+            # Prefer successful extracted fixture data; only exclude if extraction missing
+            if v.get("extraction"):
+                vendor_extraction.set_extracted(v, version=snapshots.current_version(state))
+            else:
+                vendor_extraction.set_excluded(
+                    v,
+                    reason="Interview reset: vendor reply could not be deterministically extracted; excluded for demo terminal state.",
+                    actor="interview_reset",
+                )
+                state.setdefault("buyer_review_log", []).append(
+                    {
+                        "action": "exclude_vendor",
+                        "vendor_id": v.get("vendor_id"),
+                        "vendor": v.get("name"),
+                        "reason": "Interview reset demo terminal — excluded after non-deterministic extract.",
+                        "at": _now(),
+                        "actor": "interview_reset",
+                    }
+                )
     return state
 
 
@@ -490,7 +531,9 @@ def lifecycle_stage(state: dict) -> dict:
     with_files = [v for v in vendors if v.get("files")]
     extracted = [v for v in with_files if v.get("status") == "extracted" and v.get("extraction")]
     freeze.refresh_freeze_staleness(state)
-    fr = freeze.current_freeze(state)
+    from . import event_status
+
+    fr = event_status.active_valid_freeze(state)
     has_rec = any(r.get("status") == "current" for r in (state.get("recommendations") or []))
 
     stages = [

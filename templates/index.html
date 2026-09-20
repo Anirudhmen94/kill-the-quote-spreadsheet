@@ -100,8 +100,8 @@
           <a href="/rfx/{{ e.id }}/rfx" class="font-medium hover:underline block truncate">{{ e.title }}</a>
           <div class="text-xs text-slate-500 mt-0.5">{{ e.created_at[:16].replace('T',' ') }} UTC
             <span class="mx-1">&middot;</span>
-            <span class="capitalize">{{ e.status }}</span>
-            {% if e.vendors %}<span class="mx-1">&middot;</span>{{ e.extracted }}/{{ e.vendors }} vendors read{% endif %}
+            <span data-testid="event-status-{{ e.status_key or e.status }}" class="{% if e.status_key == 'freeze_requires_review' %}text-rose-700 font-medium{% endif %}">{{ e.status_label or e.status }}</span>
+            {% if e.vendors %}<span class="mx-1">&middot;</span>{{ e.extracted }}{% if e.excluded %}+{{ e.excluded }} excl.{% endif %}/{{ e.vendors }} vendors read{% endif %}
           </div>
         </div>
         <form method="post" action="/rfx/{{ e.id }}/delete" onsubmit="return confirm('Delete this sourcing event and all its files?')">

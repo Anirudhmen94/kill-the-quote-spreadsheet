@@ -3,7 +3,9 @@
 {% block title %}Award · {{ state.rfx.title }}{% endblock %}
 {% block content %}
 {% set rec = current_rec %}
-{% set frozen = freeze_pack and freeze_pack.status == 'frozen' %}
+{% set freeze_validity = freeze_validity if freeze_validity is defined else none %}
+{% set frozen = freeze_pack and freeze_pack.status == 'frozen' and freeze_validity != 'requires_review' and freeze_validity != 'invalid_historical' and (freeze_pack.integrity or '') != 'invalid_historical_freeze' %}
+{% set invalid_hist = freeze_pack and ((freeze_pack.integrity or '') == 'invalid_historical_freeze' or freeze_pack.status == 'requires_review' or freeze_validity in ['requires_review', 'invalid_historical']) %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
@@ -11,6 +13,7 @@
       {{ tip("Default strategy: cheapest per line among vendors who cleared knockout quality checks.", aria="Award help", width="w-64") }}
     </h1>
     <p class="mt-1 text-sm text-slate-600">Ask before you lock · who wins · lock &amp; send. Maths in code; narrative from the analyst.</p>
+    <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
   </div>
 </div>
 
@@ -127,7 +130,7 @@
           <div class="text-xs text-slate-500 mt-1.5 font-mono">
             Snapshot {{ live.snapshot.id }}
             · Vendor data v{{ live.vendor_data_version }}
-            · {{ live.covered_line_count }} lines covered{% if live.uncovered_lines %} · {{ live.uncovered_lines|length }} uncovered{% endif %}
+            · Quality-gated scenario: {{ live.covered_line_count }} lines awarded{% if live.uncovered_lines %} · {{ live.uncovered_lines|length }} uncovered{% endif %}{% if market_quote_coverage %} · Market quotes: {{ market_quote_coverage.label }}{% endif %}
           </div>
         </div>
         {% if rec and rec.status == 'current' %}
@@ -250,18 +253,78 @@
             1. Manual lock / freeze
             {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Lock only succeeds for a complete freeze. If incomplete, use Freeze partial… with explicit acknowledgements and a written reason — never auto-invented.", aria="Lock help", width="w-64") }}
           </div>
-          {% if freeze_pack and freeze_pack.integrity == 'invalid_historical_freeze' or (freeze_pack and freeze_pack.status == 'requires_review') %}
-          <span class="rounded bg-rose-50 text-rose-900 border border-rose-300 px-2 py-1 text-xs" data-testid="freeze-invalid-banner">Requires review — invalid historical complete freeze</span>
+          {% if invalid_hist %}
+          <span class="rounded bg-rose-50 text-rose-900 border border-rose-300 px-2 py-1 text-xs" data-testid="freeze-invalid-banner">Freeze requires review</span>
           {% elif frozen and freeze_pack.freeze_mode == 'partial' %}
           <span class="rounded bg-amber-50 text-amber-950 border border-amber-300 px-2 py-1 text-xs font-medium" data-testid="freeze-partial-banner">FROZEN PARTIAL · uncovered {{ freeze_pack.uncovered_lines|join(', ') if freeze_pack.uncovered_lines else '—' }} · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
           {% elif frozen %}
-          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs">Frozen complete · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
+          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs" data-testid="freeze-complete-banner">Frozen complete · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
           {% else %}
           <span class="rounded bg-slate-50 text-slate-700 border border-slate-200 px-2 py-1 text-xs">Not locked yet</span>
           {% endif %}
         </div>
 
-        {% if not frozen %}
+        {% if invalid_hist %}
+        <div class="rounded-lg border border-rose-300 bg-rose-50 px-3 py-3 text-sm text-rose-950 space-y-2" data-testid="invalid-historical-freeze-block" id="replacement-rec">
+          <div class="font-semibold">Invalid historical complete freeze · Requires review</div>
+          <p class="text-xs leading-relaxed">
+            This pack was labeled complete but still has uncovered lines.
+            {% if freeze_pack.covered_line_count is not none and (freeze_pack.processing_completeness.line_count if freeze_pack.processing_completeness is mapping else none) %}
+            {{ freeze_pack.covered_line_count }}/{{ freeze_pack.processing_completeness.line_count }} lines are preserved for audit.
+            {% elif freeze_pack.covered_line_count is not none %}
+            {{ freeze_pack.covered_line_count }} covered lines are preserved for audit.
+            {% else %}
+            Covered lines are preserved for audit.
+            {% endif %}
+            Notices and final freeze exports stay disabled until you create a new valid freeze.
+          </p>
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
+            <div><dt class="text-rose-800/80 inline">Original id</dt> <dd class="inline">{{ freeze_pack.id }}</dd></div>
+            <div><dt class="text-rose-800/80 inline">Original mode</dt> <dd class="inline">{{ freeze_pack.freeze_mode or 'complete' }}</dd></div>
+            <div><dt class="text-rose-800/80 inline">Covered / requested</dt> <dd class="inline">{{ freeze_pack.covered_line_count or '—' }}{% if freeze_pack.processing_completeness and freeze_pack.processing_completeness.line_count %}/{{ freeze_pack.processing_completeness.line_count }}{% endif %}</dd></div>
+            <div><dt class="text-rose-800/80 inline">Uncovered IDs</dt> <dd class="inline">{{ freeze_pack.uncovered_lines|join(', ') if freeze_pack.uncovered_lines else '—' }}</dd></div>
+            <div><dt class="text-rose-800/80 inline">Frozen at</dt> <dd class="inline">{{ freeze_pack.frozen_at or '—' }}</dd></div>
+            <div><dt class="text-rose-800/80 inline">Repair status</dt> <dd class="inline">{{ freeze_pack.status }} · {{ freeze_pack.integrity or '—' }}</dd></div>
+          </dl>
+          <p class="text-xs"><a href="/rfx/{{ state.id }}/ai-log" class="underline font-medium">View AI / audit log</a></p>
+          <form method="post" action="/rfx/{{ state.id }}/award/replacement-recommendation" class="space-y-2 pt-1" data-testid="replacement-rec-form">
+            <label class="block text-xs font-medium">Replacement rationale <span class="text-rose-700">(required — saves recommendation, does not auto-freeze)</span>
+              <textarea name="rationale" rows="2" required minlength="8"
+                class="mt-1 w-full rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm text-slate-900"
+                placeholder="Explain the replacement recommendation while preserving the historical freeze for audit."
+                data-testid="replacement-rec-rationale"></textarea>
+            </label>
+            <button type="submit"
+              class="rounded-lg bg-rose-900 text-white px-4 py-2 text-sm font-medium hover:bg-rose-800"
+              data-testid="replacement-rec-btn">Create replacement recommendation</button>
+          </form>
+        </div>
+        <button type="button" disabled class="rounded-lg bg-slate-200 text-slate-400 px-5 py-2.5 text-sm font-medium cursor-not-allowed" data-testid="award-lock-btn" aria-disabled="true">Lock award</button>
+        {% elif not frozen %}
+        {% set cta = lock_cta if lock_cta is defined else none %}
+        {% if cta and not cta.show_enabled_lock %}
+        <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950 space-y-2" data-testid="award-contextual-lock-cta" data-cta-key="{{ cta.cta_key }}">
+          <p class="text-xs">{{ cta.cta_detail }}</p>
+          {% if cta.cta_key == 'unsaved_recommendation' %}
+          <form method="post" action="/rfx/{{ state.id }}/award/save-recommendation" class="space-y-2">
+            <label class="block text-xs font-medium">Rationale
+              <input type="text" name="rationale" required value="{{ lock_rationale_prefill or '' }}"
+                class="mt-1 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm"
+                data-testid="award-lock-rationale">
+            </label>
+            <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium" data-testid="award-contextual-cta-btn">{{ cta.cta_label }}</button>
+          </form>
+          {% elif cta.cta_href %}
+          <a href="{{ cta.cta_href }}" class="inline-flex rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800" data-testid="award-contextual-cta-btn">{{ cta.cta_label }}</a>
+          {% endif %}
+          <p class="text-[11px] text-amber-900/80">Generic <strong>Lock award</strong> stays disabled until this is resolved.</p>
+        </div>
+        {# Disabled lock control for tests / a11y — never enabled in invalid states #}
+        <button type="button" disabled
+          class="rounded-lg bg-slate-200 text-slate-400 px-5 py-2.5 text-sm font-medium cursor-not-allowed"
+          data-testid="award-lock-btn"
+          aria-disabled="true">Lock award</button>
+        {% else %}
         <form method="post" action="/rfx/{{ state.id }}/award/lock" class="space-y-3" data-testid="award-lock-form">
           {% if not rec or rec.status != 'current' %}
           <label class="block text-xs font-medium text-slate-800">Reason <span class="text-rose-700">(required — saved as recommendation)</span>
@@ -274,11 +337,12 @@
           <button type="submit"
             class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:bg-slate-800"
             data-testid="award-lock-btn"
-            {% if not live or not live.available %}disabled{% endif %}>Lock award</button>
+            {% if not live or not live.available or (cta and not cta.show_enabled_lock) %}disabled{% endif %}>Lock award</button>
           <p class="text-xs text-slate-500">One click: save rationale if needed, then complete freeze only. If incomplete, use Freeze partial… below with real acknowledgements + reason.</p>
         </form>
+        {% endif %}
 
-        <details class="text-xs text-slate-600" data-testid="award-freeze-details">
+        <details class="text-xs text-slate-600" data-testid="award-freeze-details"{% if cta and cta.open_partial %} open{% endif %}>
           <summary class="cursor-pointer hover:text-slate-900 font-medium text-slate-800">Freeze complete vs Freeze partial…</summary>
           <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="mt-2 rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
             <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
@@ -318,7 +382,7 @@
       <div class="px-4 py-4 space-y-3">
         <div class="font-medium text-slate-900">2. Send award &amp; regret emails</div>
         <p class="text-xs text-slate-500">Stubs award emails to winners and regret emails to others into Outbox. No real SMTP.</p>
-        {% if frozen %}
+        {% if frozen and not invalid_hist %}
         <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
           <button type="submit"
             class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100"
@@ -336,7 +400,7 @@
         <button type="button" disabled
           class="rounded-lg border border-slate-200 bg-slate-100 text-slate-400 px-4 py-2 text-sm font-medium cursor-not-allowed"
           data-testid="award-send-btn">Send award &amp; regret emails</button>
-        <span class="text-xs text-slate-500 ml-2">Lock first</span>
+        <span class="text-xs text-slate-500 ml-2">{% if invalid_hist %}Notices disabled — freeze requires review{% else %}Lock first{% endif %}</span>
         {% endif %}
       </div>
     </div>

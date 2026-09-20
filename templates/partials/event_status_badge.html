@@ -1,0 +1,15 @@
+{# Single buyer-facing event status badge. #}
+{% if event_display_status %}
+<span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium
+  {% if event_display_status.key == 'freeze_requires_review' %}border-rose-300 bg-rose-50 text-rose-900
+  {% elif event_display_status.key in ['complete_frozen'] %}border-emerald-300 bg-emerald-50 text-emerald-900
+  {% elif event_display_status.key == 'partial_frozen' %}border-amber-300 bg-amber-50 text-amber-950
+  {% elif event_display_status.key in ['recommendation_stale', 'processing_requires_action'] %}border-amber-300 bg-amber-50 text-amber-950
+  {% elif event_display_status.key == 'recommendation_saved' %}border-sky-300 bg-sky-50 text-sky-950
+  {% else %}border-slate-200 bg-slate-50 text-slate-700{% endif %}"
+  data-testid="event-display-status"
+  data-status-key="{{ event_display_status.key }}"
+  title="{{ event_display_status.detail or event_display_status.label }}">
+  {{ event_display_status.label }}
+</span>
+{% endif %}

@@ -7,6 +7,7 @@
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="text-2xl font-semibold tracking-tight">Side-by-side comparison</h1>
+    <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
     <p class="mt-1 text-sm text-slate-600">Verified Pass comparison only — <strong>ok / converted / reviewed</strong> cells for vendors who cleared quality knockouts. Flagged prices, Fail/Partial gates, and coverage gaps live on <a href="/rfx/{{ state.id }}/anomalies" class="underline font-medium">Anomalies</a>. Prices normalised to <strong>INR per piece</strong>. FX {{ cmp.fx.rates_to_inr.USD }} INR/USD as of {{ cmp.fx.as_of }}.</p>
   </div>
   <div class="flex items-center gap-2">

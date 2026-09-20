@@ -46,7 +46,7 @@
         <span><span class="inline-block w-2 h-2 rounded-sm bg-rose-300 mr-1"></span>Uncovered {{ charts.coverage.uncovered }}</span>
       </div>
       {% if charts.coverage.market_label %}
-      <div class="mt-2 text-[11px] text-slate-500">Market quotes: {{ charts.coverage.market_label }}</div>
+      <div class="mt-2 text-[11px] text-slate-500" data-testid="market-quote-coverage">Market quote coverage: {{ charts.coverage.market_label }}</div>
       {% endif %}
       {% endif %}
     </div>
@@ -59,7 +59,7 @@
       <div class="text-xl font-semibold tabular-nums text-slate-900">{{ charts.cost.total_extended_inr|inr }} <span class="text-xs font-normal text-slate-500">/ yr</span></div>
       <div class="mt-1 text-[11px] text-slate-600">{{ charts.cost.strategy }}</div>
       {% if charts.cost.market_label %}
-      <div class="mt-2 text-[11px] text-slate-500">Market note: {{ charts.cost.market_label }}</div>
+      <div class="mt-2 text-[11px] text-slate-500">Market quote coverage (not scenario cost): {{ charts.cost.market_label }}</div>
       {% endif %}
       {% endif %}
     </div>

@@ -18,7 +18,7 @@
       {{ it.vendor.split()[0] }} {{ it.extended_pct }}% · {{ it.lines }} ln
     </span>
     {% endfor %}
-    <span class="text-slate-500">Coverage {{ charts.coverage.label }}</span>
+    <span class="text-slate-500" data-testid="quality-gated-coverage">Scenario {{ charts.coverage.label }}</span>{% if charts.coverage.market_label %} <span class="text-slate-400" data-testid="market-quote-coverage">· Market {{ charts.coverage.market_label }}</span>{% endif %}
   </div>
 </div>
 {% endif %}

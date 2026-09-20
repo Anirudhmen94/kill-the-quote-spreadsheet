@@ -246,10 +246,18 @@ def award_page(request: Request, rfx_id: str):
     if live.get("available") and not life.get("can_freeze"):
         lock_rationale_prefill = award_ask.default_lock_rationale(state, live)
 
-    from core import charts
+    from core import charts, event_status
 
     chart_bundle = charts.build_chart_bundle(state, live=live if live.get("available") else None)
     audit_strip = charts.audit_trust_strip(state)
+    lock_cta = event_status.derive_lock_cta(
+        state,
+        live=live if live.get("available") else None,
+        life=life,
+        freeze_check_complete=freeze_check_complete,
+        has_blocking_exceptions=blocking,
+    )
+    freeze_validity = event_status.freeze_validity(pack) if pack else None
 
     return render(
         request,
@@ -262,11 +270,15 @@ def award_page(request: Request, rfx_id: str):
         historical_recs=historical,
         gates=gates,
         freeze_pack=pack,
+        freeze_validity=freeze_validity,
         active="award",
         has_blocking_exceptions=blocking,
         flash=flash,
         recommendation_lifecycle=life,
         market_quote_coverage=cmp.get("market_quote_coverage"),
+        scenario_award_coverage=(live.get("scenario") or {}).get("scenario_award_coverage")
+        if live.get("available")
+        else (cmp.get("scenario_award_coverage") if isinstance(cmp, dict) else None),
         freeze_check_complete=freeze_check_complete,
         discount_confirmations=state.get("discount_confirmations") or {},
         conditional_discounts=conditional,
@@ -281,6 +293,7 @@ def award_page(request: Request, rfx_id: str):
         lock_rationale_prefill=lock_rationale_prefill,
         charts=chart_bundle,
         audit_strip=audit_strip,
+        lock_cta=lock_cta,
     )
 
 
@@ -590,6 +603,92 @@ def _freeze_error_flash(message: str) -> str:
             "confirm assumed cells if needed, or resolve issues on Compare."
         )
     return msg + hint
+
+
+@router.post("/rfx/{rfx_id}/award/replacement-recommendation", response_class=HTMLResponse)
+async def replacement_recommendation_route(
+    request: Request,
+    rfx_id: str,
+    rationale: str = Form(""),
+):
+    """Preserve invalid historical freeze; save a new recommendation without auto-freezing."""
+    from core import event_status, vendor_extraction as vex
+
+    state = load_or_404(rfx_id)
+    pack = event_status.latest_relevant_freeze(state)
+    validity = event_status.freeze_validity(pack)
+    if validity not in (
+        event_status.VALIDITY_REQUIRES_REVIEW,
+        event_status.VALIDITY_INVALID_HISTORICAL,
+    ):
+        award_actions.push_flash(
+            state,
+            "Replacement recommendation is only for invalid historical freezes that require review.",
+            level="error",
+        )
+        storage.save_state(rfx_id, state)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#lock-send", status_code=303)
+
+    failed = [
+        v
+        for v in state.get("vendors") or []
+        if vex.get_status(v) == vex.STATUS_FAILED_NO_PREVIOUS
+    ]
+    if failed:
+        names = ", ".join(v.get("name") or "?" for v in failed)
+        award_actions.push_flash(
+            state,
+            f"Resolve failed vendor response(s) first (retry or exclude): {names}.",
+            level="error",
+        )
+        storage.save_state(rfx_id, state)
+        return RedirectResponse(f"/rfx/{rfx_id}/email", status_code=303)
+
+    text_r = (rationale or "").strip()
+    if len(text_r) < 8:
+        award_actions.push_flash(
+            state,
+            "Replacement recommendation requires a written rationale (preserve historical freeze; do not auto-freeze).",
+            level="error",
+        )
+        storage.save_state(rfx_id, state)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#replacement-rec", status_code=303)
+
+    try:
+        snapshots.save_recommendation_from_live(
+            state,
+            text_r
+            + (
+                f"\n\n_Replacement after invalid historical freeze "
+                f"`{(pack or {}).get('id')}` — historical pack preserved; not auto-frozen._"
+            ),
+        )
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+        storage.save_state(rfx_id, state)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#replacement-rec", status_code=303)
+
+    state.setdefault("buyer_review_log", []).append(
+        {
+            "action": "replacement_recommendation",
+            "freeze_id": (pack or {}).get("id"),
+            "detail": "Saved replacement recommendation; historical invalid freeze preserved; no auto-freeze.",
+            "at": __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat(timespec="seconds"),
+            "actor": "buyer",
+        }
+    )
+    award_actions.push_flash(
+        state,
+        "Replacement recommendation saved. Historical freeze preserved for audit. "
+        "Notices remain disabled until you create a new valid freeze.",
+        cta_href=f"/rfx/{rfx_id}/award#lock-send",
+        cta_label="Continue on Award",
+    )
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/award#lock-send", status_code=303)
+
 
 
 @router.post("/rfx/{rfx_id}/award/freeze", response_class=HTMLResponse)

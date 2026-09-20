@@ -71,8 +71,10 @@ class CoverageLabel:
 
     def __post_init__(self) -> None:
         if not self.label:
-            noun = "quoted" if self.kind == "market_quote" else "awarded"
-            self.label = f"{self.covered}/{self.total} lines {noun}"
+            if self.kind == "market_quote":
+                self.label = f"{self.covered}/{self.total} lines with a market quote"
+            else:
+                self.label = f"{self.covered}/{self.total} lines awarded (quality-gated scenario)"
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -800,7 +802,9 @@ def recommendation_lifecycle(state: dict) -> dict:
         None,
     )
     freeze = state.get("freeze") or {}
-    if freeze.get("status") == "frozen":
+    from . import event_status
+
+    if event_status.is_active_valid_freeze(freeze):
         mode = freeze.get("freeze_mode") or "complete"
         life = REC_FROZEN_COMPLETE if mode == "complete" else REC_FROZEN_PARTIAL
         return {
@@ -1025,8 +1029,10 @@ def freeze_ux_checklist(
     from . import freeze as freeze_mod
 
     life = life or recommendation_lifecycle(state)
+    from . import event_status
+
     pack = freeze_mod.current_freeze(state)
-    frozen = bool(pack and pack.get("status") == "frozen")
+    frozen = event_status.is_active_valid_freeze(pack)
     calc_ok = bool(live and live.get("available"))
     rec_ok = bool(life.get("can_freeze"))
     anomalies_ok = not bool(has_blocking_exceptions)

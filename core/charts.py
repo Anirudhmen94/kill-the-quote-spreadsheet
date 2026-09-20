@@ -63,12 +63,12 @@ def coverage_bars(
         uncovered = int(uncovered)
     pct = round(100.0 * covered / total, 1) if total else 0.0
     return {
-        "title": "Coverage",
+        "title": "Quality-gated scenario coverage",
         "covered": covered,
         "uncovered": uncovered,
         "total": total,
         "pct_covered": pct,
-        "label": label or (f"{covered}/{total} lines awarded" if total else "No lines"),
+        "label": label or (f"{covered}/{total} lines awarded (quality-gated)" if total else "No lines"),
         "market_label": market_label,  # only when engine already exposed it
         "empty": total <= 0,
     }
@@ -194,24 +194,66 @@ def audit_trust_strip(state: dict) -> dict[str, Any]:
     if not overrides and log:
         overrides = sum(1 for r in log if (r.get("action") or "") in override_actions)
 
+    from . import event_status
+
     freeze_label = "Not frozen"
     freeze_detail = None
+    freeze_validity = None
+    invalid_historical = None
     if pack:
-        status = pack.get("status") or "frozen"
+        freeze_validity = event_status.freeze_validity(pack)
         fid = pack.get("id") or "—"
         mode = pack.get("freeze_mode") or ""
-        freeze_label = f"{status.title()} · {fid}"
-        if mode:
-            freeze_label += f" · {mode}"
-        freeze_detail = (
-            f"v{pack.get('vendor_data_version')} · "
-            f"snap {pack.get('calculation_snapshot_id') or '—'}"
-        )
+        covered = pack.get("covered_line_count")
+        line_count = (pack.get("processing_completeness") or {}).get("line_count")
+        uncovered = list(pack.get("uncovered_lines") or [])
+        if freeze_validity in (
+            event_status.VALIDITY_REQUIRES_REVIEW,
+            event_status.VALIDITY_INVALID_HISTORICAL,
+        ):
+            freeze_label = "Freeze requires review"
+            coverage_bits = ""
+            if covered is not None and line_count:
+                coverage_bits = f" · {covered}/{line_count} preserved for audit"
+            freeze_detail = f"{fid}{coverage_bits}"
+            invalid_historical = {
+                "id": fid,
+                "original_mode": mode or "complete",
+                "covered_line_count": covered,
+                "line_count": line_count,
+                "uncovered_lines": uncovered,
+                "frozen_at": pack.get("frozen_at"),
+                "repaired_at": pack.get("reclassified_at") or pack.get("invalidated_at"),
+                "integrity": pack.get("integrity"),
+                "invalid_reason": pack.get("invalid_reason"),
+                "status": pack.get("status"),
+                "ai_log_href": f"/rfx/{rid}/ai-log",
+            }
+        elif event_status.is_active_valid_freeze(pack):
+            if mode == "partial":
+                freeze_label = f"Frozen partial · {fid}"
+            else:
+                freeze_label = f"Frozen complete · {fid}"
+            freeze_detail = (
+                f"v{pack.get('vendor_data_version')} · "
+                f"snap {pack.get('calculation_snapshot_id') or '—'}"
+            )
+        else:
+            status = pack.get("status") or "historical"
+            freeze_label = f"Historical freeze · {fid}"
+            if mode:
+                freeze_label += f" · {mode}"
+            freeze_detail = (
+                f"v{pack.get('vendor_data_version')} · "
+                f"snap {pack.get('calculation_snapshot_id') or '—'}"
+            )
 
     return {
         "freeze_label": freeze_label,
         "freeze_detail": freeze_detail,
         "freeze_id": (pack or {}).get("id") if pack else None,
+        "freeze_validity": freeze_validity,
+        "invalid_historical": invalid_historical,
         "notices_sent": notices_sent,
         "buyer_overrides": overrides,
         "links": {
