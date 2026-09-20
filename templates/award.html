@@ -11,12 +11,15 @@
 </div>
 
 {% if flash and flash.message %}
-<div class="mt-4 rounded-lg border px-3 py-2 text-sm
+<div class="mt-4 rounded-lg border px-4 py-4 text-base
   {% if flash.level == 'error' %}border-rose-300 bg-rose-50 text-rose-950
-  {% else %}border-emerald-300 bg-emerald-50 text-emerald-950{% endif %}" data-testid="award-flash">
-  <strong>{% if flash.level == 'error' %}Error.{% else %}Done.{% endif %}</strong> {{ flash.message }}
+  {% else %}border-emerald-300 bg-emerald-50 text-emerald-950{% endif %}" data-testid="award-flash" role="status">
+  <strong class="font-semibold">{% if flash.level == 'error' %}Error.{% else %}Success{% endif %}</strong>
+  <span class="ml-1">{{ flash.message }}</span>
   {% if flash.level != 'error' %}
-  <a href="/rfx/{{ state.id }}/email#outbox" class="underline ml-2">View Outbox</a>
+  <a href="{{ flash.cta_href or ('/rfx/' ~ state.id ~ '/email#outbox') }}" class="underline ml-3 font-medium">
+    {{ flash.cta_label or 'View Email Outbox' }}
+  </a>
   {% endif %}
 </div>
 {% endif %}

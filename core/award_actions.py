@@ -20,8 +20,19 @@ def _vendor_by_name(state: dict) -> dict[str, dict]:
     return {v["name"]: v for v in state.get("vendors", [])}
 
 
-def push_flash(state: dict, message: str, level: str = "success") -> None:
+def push_flash(
+    state: dict,
+    message: str,
+    level: str = "success",
+    *,
+    cta_href: str | None = None,
+    cta_label: str | None = None,
+) -> None:
     state["flash"] = {"message": message, "level": level, "at": _now()}
+    if cta_href:
+        state["flash"]["cta_href"] = cta_href
+    if cta_label:
+        state["flash"]["cta_label"] = cta_label
 
 
 def pop_flash(state: dict) -> dict | None:
@@ -84,11 +95,18 @@ def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
         ),
         pack=pack,
     )
+    award_count = sum(1 for entry in sent if entry.get("kind") == "award_notice")
+    regret_count = sum(1 for entry in sent if entry.get("kind") in ("regret", "regret_notice"))
     flash = (
-        f"Stub-sent {len(sent)} vendor email(s) and notified {len(stake_entries)} stakeholder(s). "
-        f"See Email → Outbox."
+        f"Successfully stub-sent {award_count} award notice(s) and {regret_count} regret notice(s) "
+        f"to Outbox (no real SMTP). View Outbox."
     )
-    push_flash(state, flash)
+    push_flash(
+        state,
+        flash,
+        cta_href=f"/rfx/{state['id']}/email#outbox",
+        cta_label="View Email Outbox",
+    )
     return {"sent": sent, "stakeholders": stake_entries, "flash": flash}
 
 

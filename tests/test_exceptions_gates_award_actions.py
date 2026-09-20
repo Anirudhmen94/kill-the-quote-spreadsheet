@@ -249,6 +249,16 @@ def test_award_send_notices_export_and_stakeholder_alerts():
         o.get("kind") == "stakeholder_alert" or (o.get("to") or "").endswith("@buyer.example")
         for o in new_mail
     )
+    vendor_mail = [o for o in new_mail if o.get("vendor_id")]
+    award_count = sum(1 for o in vendor_mail if o.get("kind") == "award_notice")
+    regret_count = sum(1 for o in vendor_mail if o.get("kind") in ("regret", "regret_notice"))
+    flash = st.get("flash") or {}
+    assert flash.get("level") == "success"
+    assert flash.get("message") == (
+        f"Successfully stub-sent {award_count} award notice(s) and {regret_count} regret notice(s) "
+        "to Outbox (no real SMTP). View Outbox."
+    )
+    assert flash.get("cta_href") == f"/rfx/{st['id']}/email#outbox"
 
     page = client.get(f"/rfx/{st['id']}/award")
     assert page.status_code == 200
@@ -271,6 +281,25 @@ def test_award_send_notices_export_and_stakeholder_alerts():
     assert x.status_code == 200
     ctype = x.headers.get("content-type", "")
     assert "spreadsheet" in ctype or "officedocument" in ctype or x.content[:2] == b"PK"
+
+
+def test_award_send_notices_failure_redirects_with_error_flash():
+    st = _seed()
+    rid = st["id"]
+
+    r = client.post(f"/rfx/{rid}/award/send-notices", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers.get("location") == f"/rfx/{rid}/award#award-step-3"
+
+    st2 = storage.load_state(rid)
+    flash = st2.get("flash") or {}
+    assert flash.get("level") == "error"
+    assert "Freeze an award first" in (flash.get("message") or "")
+
+    page = client.get(f"/rfx/{rid}/award")
+    assert page.status_code == 200
+    assert "Error" in page.text
+    assert "Freeze an award first" in page.text
 
 
 def test_app_import_smoke():

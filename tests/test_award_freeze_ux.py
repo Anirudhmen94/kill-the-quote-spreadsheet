@@ -193,12 +193,19 @@ def test_partial_freeze_post_persists_and_redirects_for_plain_form():
     assert pack.get("freeze_mode") == "partial"
     flash = st2.get("flash") or {}
     assert flash.get("level") == "success"
-    assert "frozen" in (flash.get("message") or "").lower()
+    assert flash.get("message") == (
+        f"Award frozen successfully (partial). Snapshot {pack.get('calculation_snapshot_id')}. "
+        "Next: send award & regret notices below."
+    )
+    assert flash.get("cta_href") == f"/rfx/{rid}/award#award-step-3"
+    assert flash.get("cta_label") == "Continue: send notices"
 
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
     assert "Frozen" in page.text
     assert 'data-testid="award-flash"' in page.text
+    assert "Success" in page.text
+    assert "Continue: send notices" in page.text
 
 
 def test_award_page_distinguishes_ready_attempt_vs_complete_clear():

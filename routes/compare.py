@@ -265,7 +265,9 @@ def send_award_notices(request: Request, rfx_id: str, vendor_id: str = Form(""))
     try:
         award_actions.send_award_notices(state, vendor_id=vendor_id or None)
     except ValueError as e:
-        return error_fragment(str(e), 400)
+        award_actions.push_flash(state, str(e), level="error")
+        storage.save_state(rfx_id, state)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#award-step-3", status_code=303)
     storage.save_state(rfx_id, state)
     return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
 
@@ -423,8 +425,11 @@ async def freeze_award_route(
     mode_label = pack.get("freeze_mode") or mode
     award_actions.push_flash(
         state,
-        f"Award frozen ({mode_label}). Snapshot {pack.get('calculation_snapshot_id')}.",
+        f"Award frozen successfully ({mode_label}). Snapshot {pack.get('calculation_snapshot_id')}. "
+        "Next: send award & regret notices below.",
         level="success",
+        cta_href=award_url,
+        cta_label="Continue: send notices",
     )
     storage.save_state(rfx_id, state)
     return _after_post()
