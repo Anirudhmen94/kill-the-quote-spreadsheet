@@ -70,7 +70,7 @@ class RFxDraftAI(BaseModel):
 
     title: str
     scope: str = Field(description="3-6 paragraphs: background, what is being sourced, volumes, quality expectations, submission instructions")
-    line_items: list[LineItemAI] = Field(description="Exactly 30 line items")
+    line_items: list[LineItemAI] = Field(description="Line items matching the brief's stated SKU/line-item count")
     terms: CommercialTermsAI
     questionnaire: list[QuestionAI] = Field(description="8-12 quality and compliance questions; mark 3-4 as knockout")
 
