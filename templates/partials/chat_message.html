@@ -62,6 +62,8 @@
         Based on vendor data version {{ m.vendor_data_version if m.vendor_data_version is not none else 'legacy' }}
         · Calculation snapshot {{ m.calculation_snapshot_id or '—' }}
         · Generated {{ (m.at or '')[:16].replace('T',' ') }} UTC
+        {% if m.premade_id %}<span class="ml-1 rounded bg-slate-100 px-1.5 py-0.5">premade</span>{% endif %}
+        {% if m.cache_hit %}<span class="ml-1 rounded bg-emerald-50 text-emerald-800 px-1.5 py-0.5">cached</span>{% endif %}
       </div>
       <details class="inline">
         <summary class="cursor-pointer hover:text-slate-800">Tool trace ({{ m.trace|length }} call{{ 's' if m.trace|length != 1 }})</summary>

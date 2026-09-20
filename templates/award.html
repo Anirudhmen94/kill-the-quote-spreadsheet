@@ -58,7 +58,7 @@
         </div>
 
         <div>
-          <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Free ask</div>
+          <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Free ask (live)</div>
           <form id="award-ask-form"
             hx-post="/rfx/{{ state.id }}/award/ask"
             hx-target="#award-ask-answers"
@@ -221,12 +221,13 @@
   {# ========== C. Lock & send ========== #}
   <section aria-labelledby="award-lock-send" id="lock-send">
     <h2 id="award-lock-send" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Lock &amp; send</h2>
+    <p class="text-sm text-slate-600 mb-2">Finalize from a suggestion above (<strong>Use this recommendation</strong> or <strong>Use &amp; lock award</strong>), or lock manually below.</p>
     <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <div class="px-4 py-4 border-b border-slate-100 space-y-3">
+      <div class="px-4 py-4 border-b border-slate-100 space-y-3" data-testid="award-manual-lock">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="font-medium text-slate-900 inline-flex items-center gap-1.5">
-            1. Lock award
-            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Prefers a complete freeze; auto-partials when coverage blocks complete.", aria="Lock help", width="w-64") }}
+            1. Manual lock / freeze
+            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Prefers a complete freeze; auto-partials when coverage blocks complete. Open Freeze complete / partial for explicit modes.", aria="Lock help", width="w-64") }}
           </div>
           {% if frozen %}
           <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs">Frozen · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}{% if freeze_pack.freeze_mode %} · {{ freeze_pack.freeze_mode }}{% endif %}</span>
@@ -251,6 +252,41 @@
             {% if not live or not live.available %}disabled{% endif %}>Lock award</button>
           <p class="text-xs text-slate-500">One click: save rationale if needed, then complete freeze — or auto-partial with acknowledgements when coverage blocks complete.</p>
         </form>
+
+        <details class="text-xs text-slate-600" data-testid="award-freeze-details">
+          <summary class="cursor-pointer hover:text-slate-900 font-medium text-slate-800">Freeze complete vs Freeze partial…</summary>
+          <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="mt-2 rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+            <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
+            <p class="text-[11px] text-slate-600">Requires a current saved recommendation. Complete needs full coverage; partial needs acknowledgements + reason.</p>
+            {% if freeze_check_complete and not freeze_check_complete.ok %}
+            <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
+              Complete freeze blocked:
+              <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+            </div>
+            {% endif %}
+            <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">
+              <input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)
+            </label>
+            <div class="border-t border-slate-200 pt-2 space-y-1">
+              <div class="text-[11px] font-medium text-slate-700">Partial freeze acknowledgements</div>
+              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="coverage_gaps"> Acknowledge coverage gaps</label>
+              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="selected_blockers"> Acknowledge selected-award blockers</label>
+              <label class="block text-[11px]">Partial reason
+                <textarea name="partial_reason" rows="2" class="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs" placeholder="Required for partial freeze"></textarea>
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
+                data-testid="award-freeze-complete-btn"
+                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
+                onclick="document.getElementById('freeze-mode').value='complete'">Freeze complete</button>
+              <button type="submit" class="rounded-lg border border-amber-600 text-amber-950 bg-amber-50 px-3 py-1.5 text-xs font-medium hover:bg-amber-100"
+                data-testid="award-freeze-partial-btn"
+                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
+                onclick="document.getElementById('freeze-mode').value='partial'">Freeze partial…</button>
+            </div>
+          </form>
+        </details>
         {% endif %}
       </div>
 

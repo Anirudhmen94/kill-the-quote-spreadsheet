@@ -62,10 +62,9 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
             },
         )
         storage.save_state(rfx_id, state)
-    from routes.ask import SUGGESTED
+    from core import compare_ask
 
     ready = any(v.get("extraction") for v in state["vendors"])
-    prompts = demo_ops.DEMO_PROMPTS if demo_ops.is_demo_mode(state) else SUGGESTED
     filter_status = status if status in ("open", "pending", "resolved", "all") else "open"
     anomaly_items = exc_mod.list_exceptions(state, None if filter_status == "all" else filter_status)
     exc_counts = exc_mod.counts(state)
@@ -78,7 +77,7 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
         exclusion_summary=cmp.get("exclusion_summary"),
         gates=cmp.get("gates"),
         active="compare",
-        suggested=prompts,
+        compare_premades=compare_ask.COMPARE_PREMADES,
         ready=ready,
         anomaly_items=anomaly_items,
         exc_counts=exc_counts,
@@ -346,6 +345,53 @@ def award_ask_live(request: Request, rfx_id: str, question: str = Form(...)):
         )
     finally:
         ask_routes._release_ask(rfx_id)
+
+
+
+@router.post("/rfx/{rfx_id}/award/use-and-lock/{idx}", response_class=HTMLResponse)
+async def award_use_and_lock(request: Request, rfx_id: str, idx: int):
+    """Path A: save Ask suggestion as recommendation, then lock_award."""
+    from core import award_ask
+
+    state = load_or_404(rfx_id)
+    award_url = f"/rfx/{rfx_id}/award"
+
+    def _after():
+        if request.headers.get("HX-Request"):
+            return hx_redirect(award_url)
+        return RedirectResponse(award_url, status_code=303)
+
+    chat = state.get("chat", [])
+    if idx < 0 or idx >= len(chat):
+        award_actions.push_flash(state, "Answer not found.", level="error")
+        storage.save_state(rfx_id, state)
+        return _after()
+    m = chat[idx]
+    ok, msg = snapshots.can_save_recommendation(state, m)
+    if not ok:
+        award_actions.push_flash(state, msg, level="error")
+        storage.save_state(rfx_id, state)
+        return _after()
+    try:
+        snapshots.save_recommendation_from_answer(state, m, idx)
+        out = award_ask.lock_award(state, rationale=None)
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+        storage.save_state(rfx_id, state)
+        return _after()
+
+    pack = out["pack"]
+    mode_label = out.get("mode") or pack.get("freeze_mode") or "complete"
+    award_actions.push_flash(
+        state,
+        f"Recommendation saved and award locked successfully ({mode_label}). "
+        f"Snapshot {pack.get('calculation_snapshot_id')}. Next: send award & regret emails below.",
+        level="success",
+        cta_href=f"{award_url}#lock-send",
+        cta_label="Continue: send emails",
+    )
+    storage.save_state(rfx_id, state)
+    return _after()
 
 
 @router.post("/rfx/{rfx_id}/award/lock", response_class=HTMLResponse)

@@ -210,15 +210,16 @@ def test_narrative_validation_fallback_on_contradiction():
 
 
 def test_ask_panel_disables_while_running():
-    """Template smoke: Ask form disables button+textarea and drops duplicate submits."""
+    """Template smoke: Ask form disables button+textarea+premades and drops duplicate submits."""
     html = templates.get_template("partials/ask_panel.html").render(
         {
             "state": {"id": "rfx_test", "chat": []},
-            "suggested": ["Who is cheapest?"],
+            "compare_premades": [{"id": "quality_gated_split", "label": "QG"}],
             "ready": True,
             "ai_ok": True,
         }
     )
-    assert 'hx-disabled-elt="#ask-btn, #ask-form textarea' in html
+    assert 'hx-disabled-elt="#ask-btn, #ask-form textarea, #ask-premades button"' in html
     assert "hx-sync=\"this:drop\"" in html or "hx-sync='this:drop'" in html
     assert "window.__askBusy" in html
+    assert "Premade (fast)" in html

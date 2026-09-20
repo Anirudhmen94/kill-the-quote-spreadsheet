@@ -52,10 +52,18 @@
       {% if m.cache_hit %}<span class="ml-1 rounded bg-emerald-50 text-emerald-800 px-1.5 py-0.5">cached</span>{% endif %}
     </span>
     {% if m.status != 'stale' and not m.legacy and m.status != 'failed' %}
-    <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}" class="ml-auto">
-      <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
-        data-testid="award-ask-use-rec">Use this recommendation</button>
-    </form>
+    <div class="ml-auto flex flex-wrap items-center gap-2">
+      <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}">
+        <input type="hidden" name="return_to" value="award">
+        <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
+          data-testid="award-ask-use-rec">Use this recommendation</button>
+      </form>
+      <form hx-post="/rfx/{{ state.id }}/award/use-and-lock/{{ idx }}">
+        <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
+          data-testid="award-ask-use-and-lock"
+          title="Save this suggestion as the current recommendation, then lock the award.">Use &amp; lock award</button>
+      </form>
+    </div>
     {% endif %}
   </div>
 </div>

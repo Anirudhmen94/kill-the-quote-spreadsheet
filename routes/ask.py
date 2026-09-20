@@ -7,7 +7,7 @@ import time
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from core import analyst, demo_ops, llm, snapshots, storage
+from core import analyst, compare_ask, demo_ops, llm, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -108,6 +108,27 @@ def ask(request: Request, rfx_id: str, question: str = Form(...)):
         _release_ask(rfx_id)
 
 
+
+
+@router.post("/rfx/{rfx_id}/ask/premade", response_class=HTMLResponse)
+async def ask_premade(request: Request, rfx_id: str, prompt_id: str = Form("")):
+    """Compare Ask premade — engine-first, version-bound cache (no Claude on click)."""
+    state = load_or_404(rfx_id)
+    form = await request.form()
+    pid = (prompt_id or form.get("prompt_id") or "").strip()
+    if not pid or not compare_ask.premade_by_id(pid):
+        return error_fragment("Unknown premade prompt.", 400)
+    if not any(v.get("extraction") for v in state["vendors"]):
+        return error_fragment("Extract at least one vendor response before asking questions.", 400)
+    try:
+        result = compare_ask.get_or_build_premade(state, pid)
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    state.setdefault("chat", []).append(result)
+    storage.save_state(rfx_id, state)
+    idx = len(state["chat"]) - 1
+    return render(request, "partials/chat_message.html", state=state, m=result, idx=idx)
+
 @router.post("/rfx/{rfx_id}/ask/rerun/{idx}", response_class=HTMLResponse)
 def rerun_ask(request: Request, rfx_id: str, idx: int):
     """Rerun the same question with the latest vendor-data version; keep the old answer as historical."""
@@ -155,7 +176,8 @@ def rerun_ask(request: Request, rfx_id: str, idx: int):
 
 
 @router.post("/rfx/{rfx_id}/recommendation/{idx}", response_class=HTMLResponse)
-def save_recommendation(request: Request, rfx_id: str, idx: int):
+def save_recommendation(request: Request, rfx_id: str, idx: int, return_to: str = Form("award")):
+    """Save chat answer as current recommendation. Award-context posts return to Award."""
     state = load_or_404(rfx_id)
     chat = state.get("chat", [])
     if idx < 0 or idx >= len(chat):
@@ -169,7 +191,11 @@ def save_recommendation(request: Request, rfx_id: str, idx: int):
     except ValueError as e:
         return error_fragment(str(e), 400)
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/award")
+    # Always land on Award after saving a recommendation (Compare or Award Ask).
+    dest = f"/rfx/{rfx_id}/award"
+    if (return_to or "").strip() == "award":
+        dest = f"/rfx/{rfx_id}/award"
+    return hx_redirect(dest)
 
 
 @router.post("/rfx/{rfx_id}/chat/clear", response_class=HTMLResponse)

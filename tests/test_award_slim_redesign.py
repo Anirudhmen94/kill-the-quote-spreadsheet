@@ -97,7 +97,8 @@ def test_award_page_simpler_layout_ask_lock_send():
     assert 'data-testid="award-send-btn"' in html
 
     assert "Ready to freeze?" not in html
-    assert "Advanced…" not in html and "Advanced..." not in html
+    assert "Manual lock / freeze" in html
+    assert "Freeze complete" in html
     assert "Preview notices" not in html
     assert "Step 1 · Recommendation" not in html
     assert 'id="award-filters"' not in html
