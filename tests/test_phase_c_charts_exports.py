@@ -57,16 +57,45 @@ def test_allocation_pcts_sum_near_100():
     assert abs(sum(i["extended_pct"] for i in alloc["bars"]) - 100.0) < 0.2
 
 
-def test_export_workbook_sheet_names_and_xlsx_bytes():
+def test_award_workbook_sheet_names_and_xlsx_bytes():
     st = _seed()
     data = export.award_workbook(st, provisional=False)
     assert data[:2] == b"PK"  # zip/xlsx
     wb = load_workbook(BytesIO(data))
     names = wb.sheetnames
-    for required in ("Summary", "Award by line", "Comparison", "Flags", "Snapshot metadata"):
+    for required in ("Summary", "Award by line", "Snapshot metadata"):
         assert required in names, names
-    assert "Snapshot" not in names or "Snapshot metadata" in names
+    # Award export is awards-only — no comparison matrix / winner-allocation clutter from Compare
+    assert "Comparison" not in names
     assert "Snapshot" not in [n for n in names if n == "Snapshot"]
+
+
+def test_comparison_workbook_is_price_matrix_not_awards():
+    st = _seed()
+    data = export.comparison_workbook(st, provisional=False)
+    assert data[:2] == b"PK"
+    wb = load_workbook(BytesIO(data))
+    names = wb.sheetnames
+    assert names[0] == "Comparison"
+    for required in ("Comparison", "Flags", "Vendors", "Evidence", "Snapshot metadata"):
+        assert required in names, names
+    for banned in ("Award by line", "Non-awarded", "Summary"):
+        assert banned not in names, names
+    ws = wb["Comparison"]
+    headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+    assert headers[:5] == ["Line", "SKU", "Description", "Board", "Annual qty"]
+    # Vendor columns present (golden seed has multiple vendors)
+    assert len(headers) > 5
+    # No "Awarded to" column in the matrix
+    assert "Awarded to" not in headers
+    # At least one numeric price in the body
+    prices = []
+    for r in range(2, min(ws.max_row, 40) + 1):
+        for c in range(6, ws.max_column + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, (int, float)):
+                prices.append(v)
+    assert prices, "expected unit INR prices in comparison matrix"
 
 
 def test_export_includes_freeze_metadata_when_frozen():

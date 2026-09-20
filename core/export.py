@@ -1,4 +1,7 @@
-"""Exports: award workbook (openpyxl), markdown memo, comparison CSV.
+"""Exports: comparison workbook, award workbook, markdown memo, comparison CSV.
+
+Compare downloads the multi-vendor price matrix (no award allocations).
+Award downloads line→awarded vendor + non-awarded/regret summary.
 
 Every export is stamped with RFx id, timestamp, vendor-data version, calculation
 snapshot id, and current/historical/provisional status.
@@ -79,7 +82,215 @@ def _ensure_export_snapshot(state: dict, provisional: bool) -> tuple:
     return meta, export_snap
 
 
+def _meta_rows(meta: dict, snap: dict, pack: dict | None = None) -> list[list]:
+    rows = [
+        ["RFx ID", meta["rfx_id"]],
+        ["Export timestamp", meta["export_timestamp"]],
+        ["Vendor data version", meta["vendor_data_version"]],
+        ["Calculation snapshot ID", meta["calculation_snapshot_id"]],
+        ["Export status", meta["export_status"]],
+        ["Vendors processed", meta["vendors_processed"]],
+        ["Still processing", meta["vendors_still_processing"]],
+        ["Needs review", meta["needs_review"]],
+        ["Unresolved", meta["unresolved"]],
+        ["Input hash", snap.get("input_hash")],
+    ]
+    if pack:
+        rows.extend(
+            [
+                ["Freeze ID", pack.get("id")],
+                ["Freeze status", pack.get("status")],
+                ["Freeze mode", pack.get("freeze_mode")],
+                ["Freeze strategy", pack.get("strategy") or pack.get("strategy_key")],
+                ["Freeze snapshot ID", pack.get("calculation_snapshot_id")],
+                ["Freeze vendor data version", pack.get("vendor_data_version")],
+                ["Freeze total INR", pack.get("total_extended_inr")],
+            ]
+        )
+    return rows
+
+
+def _add_comparison_matrix_sheet(wb: Workbook, cmp: dict) -> None:
+    """Lines as rows, vendors as columns with unit INR (or cell status)."""
+    cols = ["Line", "SKU", "Description", "Board", "Annual qty"] + [v["name"] for v in cmp["vendors"]]
+    widths = {"Description": 50}
+    for v in cmp["vendors"]:
+        widths[v["name"]] = max(14, min(28, len(v["name"]) + 2))
+    ws = _sheet_from_rows(wb, "Comparison", cols, [], widths)
+    for r, ln in enumerate(cmp["lines"], start=2):
+        base = [ln["line_no"], ln["sku"], ln["description"], ln["board"], ln["annual_qty"]]
+        for c, v in enumerate(base, start=1):
+            ws.cell(row=r, column=c, value=v)
+        for i, v in enumerate(cmp["vendors"]):
+            cell = ln["cells"][v["vendor_id"]]
+            xc = ws.cell(
+                row=r,
+                column=6 + i,
+                value=cell.get("unit_inr") if cell.get("unit_inr") is not None else cell["status"],
+            )
+            xc.fill = PatternFill("solid", fgColor=STATUS_FILL.get(cell["status"], "FFFFFF"))
+            if cell.get("conversion") or cell.get("reason"):
+                from openpyxl.comments import Comment
+
+                xc.comment = Comment(
+                    ((cell.get("conversion") or "") + "\n" + (cell.get("reason") or "")).strip()[:900],
+                    "engine",
+                )
+    legend_row = len(cmp["lines"]) + 3
+    ws.cell(
+        row=legend_row,
+        column=1,
+        value=(
+            "Legend: green ok · blue converted · purple reviewed · amber needs review · "
+            "red unresolved · grey missing. Hover a cell for conversion notes. "
+            "This sheet is a price matrix only — award assignments are on the Award export."
+        ),
+    )
+
+
+def _add_comparison_support_sheets(wb: Workbook, state: dict, cmp: dict) -> None:
+    fl = engine.list_flags(cmp)
+    _sheet_from_rows(
+        wb,
+        "Flags",
+        ["Line", "Vendor", "Status", "Flags", "Reason", "Conversion", "Raw price", "Currency", "Basis", "Unit INR", "Confidence"],
+        [
+            [
+                i["line_no"],
+                i["vendor"],
+                i["status"],
+                ", ".join(i["flags"]),
+                i["reason"],
+                i["conversion"],
+                i["raw_price"],
+                i["currency"],
+                i["basis"],
+                i["unit_inr"],
+                i["confidence"],
+            ]
+            for i in fl["items"]
+        ],
+        {"Reason": 60, "Conversion": 60, "Vendor": 28},
+    )
+    _sheet_from_rows(
+        wb,
+        "Vendors",
+        [
+            "Vendor",
+            "Gate",
+            "Usable lines",
+            "Needs review",
+            "Unresolved",
+            "Missing",
+            "Questionnaire",
+            "Knockouts open",
+            "Knockouts failed",
+            "Freight",
+            "Payment",
+            "Validity",
+            "Discount",
+            "Avg confidence",
+        ],
+        [
+            [
+                v["name"],
+                v.get("gate") or v.get("questionnaire", {}).get("overall") or "",
+                v["usable"],
+                v["counts"].get("needs_review", 0),
+                v["counts"].get("unresolved", 0),
+                v["counts"].get("missing", 0),
+                v["questionnaire"]["overall"],
+                ", ".join(v["questionnaire"]["knockout_open"]),
+                ", ".join(v["questionnaire"]["knockout_failed"]),
+                v["commercial"].get("freight_text"),
+                v["commercial"].get("payment"),
+                v["commercial"].get("validity"),
+                v["commercial"].get("discount_condition"),
+                v["avg_confidence"],
+            ]
+            for v in cmp["vendors"]
+        ],
+        {"Vendor": 28, "Freight": 40, "Payment": 30, "Discount": 50},
+    )
+    ev_rows = []
+    for ln in cmp["lines"]:
+        for v in cmp["vendors"]:
+            c = ln["cells"][v["vendor_id"]]
+            ev = c.get("evidence")
+            if ev:
+                ev_rows.append(
+                    [
+                        ln["line_no"],
+                        v["name"],
+                        c.get("raw_price"),
+                        c.get("currency"),
+                        c.get("basis"),
+                        ev.get("file_name"),
+                        ev.get("location"),
+                        ev.get("snippet"),
+                        "yes" if ev.get("verified") else "NO",
+                    ]
+                )
+    _sheet_from_rows(
+        wb,
+        "Evidence",
+        ["Line", "Vendor", "Raw price", "Currency", "Basis", "File", "Location", "Verbatim snippet", "Verified in source"],
+        ev_rows,
+        {"Vendor": 28, "File": 34, "Location": 20, "Verbatim snippet": 70},
+    )
+    _sheet_from_rows(
+        wb,
+        "Review log",
+        ["When", "Vendor", "Line", "Action", "Value INR", "Note"],
+        [
+            [r.get("at"), r.get("vendor_name"), r["line_no"], r["action"], r.get("value_inr"), r.get("note")]
+            for r in state.get("reviews", [])
+        ],
+        {"Note": 60},
+    )
+
+
+def comparison_workbook(state: dict, provisional: bool = False) -> bytes:
+    """Multi-vendor price matrix workbook for the Compare page (no award allocations)."""
+    snapshots.ensure_snapshot_fields(state)
+    cmp = engine.build_comparison(state)
+    meta, snap = _ensure_export_snapshot(state, provisional)
+    wb = Workbook()
+    # Drop the default empty sheet; Comparison becomes the first sheet
+    default = wb.active
+    wb.remove(default)
+
+    _add_comparison_matrix_sheet(wb, cmp)
+    ws = wb["Comparison"]
+    # Stamp provisional banner above the legend area if needed
+    if meta.get("provisional"):
+        stamp_row = len(cmp["lines"]) + 4
+        cell = ws.cell(
+            row=stamp_row,
+            column=1,
+            value="PROVISIONAL EXPORT — vendor responses were still processing at export time.",
+        )
+        cell.font = Font(bold=True, color="B45309")
+    ws.cell(
+        row=len(cmp["lines"]) + (5 if meta.get("provisional") else 4),
+        column=1,
+        value=(
+            f"RFx {cmp['rfx_id']} · exported {meta['export_timestamp']} · "
+            f"vendor data version {meta['vendor_data_version']} · snapshot {meta['calculation_snapshot_id']} · "
+            f"{meta['export_status']} · {len(cmp['vendors'])} vendors · {cmp['line_count']} lines"
+        ),
+    )
+
+    _add_comparison_support_sheets(wb, state, cmp)
+    _sheet_from_rows(wb, "Snapshot metadata", ["Field", "Value"], _meta_rows(meta, snap))
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def award_workbook(state: dict, provisional: bool = False) -> bytes:
+    """Award-only workbook: recommendation summary, line→vendor, non-awarded/regret."""
     snapshots.ensure_snapshot_fields(state)
     cmp = engine.build_comparison(state)
     meta, snap = _ensure_export_snapshot(state, provisional)
@@ -211,64 +422,7 @@ def award_workbook(state: dict, provisional: bool = False) -> bytes:
         if cp["uncovered_lines"]:
             ws2.cell(row=len(cp["rows"]) + 4, column=1, value=f"Lines without a usable quote: {cp['uncovered_lines']}")
 
-    cols = ["Line", "SKU", "Description", "Board", "Annual qty"] + [v["name"] for v in cmp["vendors"]]
-    ws3 = _sheet_from_rows(wb, "Comparison", cols, [], {"Description": 50})
-    for r, ln in enumerate(cmp["lines"], start=2):
-        base = [ln["line_no"], ln["sku"], ln["description"], ln["board"], ln["annual_qty"]]
-        for c, v in enumerate(base, start=1):
-            ws3.cell(row=r, column=c, value=v)
-        for i, v in enumerate(cmp["vendors"]):
-            cell = ln["cells"][v["vendor_id"]]
-            xc = ws3.cell(row=r, column=6 + i, value=cell.get("unit_inr") if cell.get("unit_inr") is not None else cell["status"])
-            xc.fill = PatternFill("solid", fgColor=STATUS_FILL.get(cell["status"], "FFFFFF"))
-            if cell.get("conversion") or cell.get("reason"):
-                from openpyxl.comments import Comment
-
-                xc.comment = Comment(((cell.get("conversion") or "") + "\n" + (cell.get("reason") or "")).strip()[:900], "engine")
-    legend_row = len(cmp["lines"]) + 3
-    ws3.cell(row=legend_row, column=1, value="Legend: green ok · blue converted · purple reviewed · amber needs review · red unresolved · grey missing. Hover a cell for conversion notes.")
-
-    fl = engine.list_flags(cmp)
-    _sheet_from_rows(wb, "Flags", ["Line", "Vendor", "Status", "Flags", "Reason", "Conversion", "Raw price", "Currency", "Basis", "Unit INR", "Confidence"], [[i["line_no"], i["vendor"], i["status"], ", ".join(i["flags"]), i["reason"], i["conversion"], i["raw_price"], i["currency"], i["basis"], i["unit_inr"], i["confidence"]] for i in fl["items"]], {"Reason": 60, "Conversion": 60, "Vendor": 28})
-
-    _sheet_from_rows(wb, "Vendors", ["Vendor", "Usable lines", "Needs review", "Unresolved", "Missing", "Questionnaire", "Knockouts open", "Knockouts failed", "Freight", "Payment", "Validity", "Discount", "Avg confidence"], [[v["name"], v["usable"], v["counts"].get("needs_review", 0), v["counts"].get("unresolved", 0), v["counts"].get("missing", 0), v["questionnaire"]["overall"], ", ".join(v["questionnaire"]["knockout_open"]), ", ".join(v["questionnaire"]["knockout_failed"]), v["commercial"].get("freight_text"), v["commercial"].get("payment"), v["commercial"].get("validity"), v["commercial"].get("discount_condition"), v["avg_confidence"]] for v in cmp["vendors"]], {"Vendor": 28, "Freight": 40, "Payment": 30, "Discount": 50})
-
-    ev_rows = []
-    for ln in cmp["lines"]:
-        for v in cmp["vendors"]:
-            c = ln["cells"][v["vendor_id"]]
-            ev = c.get("evidence")
-            if ev:
-                ev_rows.append([ln["line_no"], v["name"], c.get("raw_price"), c.get("currency"), c.get("basis"), ev.get("file_name"), ev.get("location"), ev.get("snippet"), "yes" if ev.get("verified") else "NO"])
-    _sheet_from_rows(wb, "Evidence", ["Line", "Vendor", "Raw price", "Currency", "Basis", "File", "Location", "Verbatim snippet", "Verified in source"], ev_rows, {"Vendor": 28, "File": 34, "Location": 20, "Verbatim snippet": 70})
-
-    _sheet_from_rows(wb, "Review log", ["When", "Vendor", "Line", "Action", "Value INR", "Note"], [[r.get("at"), r.get("vendor_name"), r["line_no"], r["action"], r.get("value_inr"), r.get("note")] for r in state.get("reviews", [])], {"Note": 60})
-
-    meta_rows = [
-        ["RFx ID", meta["rfx_id"]],
-        ["Export timestamp", meta["export_timestamp"]],
-        ["Vendor data version", meta["vendor_data_version"]],
-        ["Calculation snapshot ID", meta["calculation_snapshot_id"]],
-        ["Export status", meta["export_status"]],
-        ["Vendors processed", meta["vendors_processed"]],
-        ["Still processing", meta["vendors_still_processing"]],
-        ["Needs review", meta["needs_review"]],
-        ["Unresolved", meta["unresolved"]],
-        ["Input hash", snap.get("input_hash")],
-    ]
-    if pack:
-        meta_rows.extend(
-            [
-                ["Freeze ID", pack.get("id")],
-                ["Freeze status", pack.get("status")],
-                ["Freeze mode", pack.get("freeze_mode")],
-                ["Freeze strategy", pack.get("strategy") or pack.get("strategy_key")],
-                ["Freeze snapshot ID", pack.get("calculation_snapshot_id")],
-                ["Freeze vendor data version", pack.get("vendor_data_version")],
-                ["Freeze total INR", pack.get("total_extended_inr")],
-            ]
-        )
-    _sheet_from_rows(wb, "Snapshot metadata", ["Field", "Value"], meta_rows)
+    _sheet_from_rows(wb, "Snapshot metadata", ["Field", "Value"], _meta_rows(meta, snap, pack))
 
     buf = io.BytesIO()
     wb.save(buf)

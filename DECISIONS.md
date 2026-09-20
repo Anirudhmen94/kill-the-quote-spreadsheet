@@ -23,6 +23,7 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 | **Award draft + notices, not freeze/lock UX** | Freeze/lock lifecycle was over-engineered for the buyer. Core freeze code may remain for tests/back-compat; Award page does not expose it. | Award Send → Outbox award + regret stubs · **manager/stakeholder notified** · status **Award drafts sent** |
 | **Email channel, stub SMTP** | Brief allows fake mail; Outbox is the proof. | `/rfx/<id>/email` Incoming + Outbox · award/regret stubs after Send |
 | **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare cell-status / gate / vendor filters · Anomalies kind filters (Award: none) |
+| **Compare export ≠ Award export** | Buyers download the matrix from Compare; award packs stay on Award. | Compare **Export workbook** → `/comparison.xlsx` (lines × vendors prices) · Award **Export Excel** → `/export.xlsx` (Award by line + Non-awarded) |
 
 ---
 
@@ -34,7 +35,7 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 3b. **Anomalies** — flagged cells, gate Fail/Partial, coverage gaps, format/pricing callouts; Override / Send for approval / Deny.  
 4. **Award** — Ask the analyst (premade + live) with **Send award to vendor** (preload + reason) and lighter **Apply this vendor**; Suggest top 2 Pass vendors; Assign by line; Acknowledgements (buyer confirmation questions); **Send award drafts** (+ regrets + manager notify); confirmation dialog; Export Excel.  
 5. **Trust chrome** — cell states, vendor data version / snapshots, audit strip.  
-6. **Charts / exports / audit** — Compare allocation & coverage bars; award workbook with line→vendor sheet + non-awarded summary.
+6. **Charts / exports / audit** — Compare allocation & coverage bars; Compare export = multi-vendor price matrix; Award export = line→vendor + non-awarded/regret.
 
 ## What we deliberately left out
 

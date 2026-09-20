@@ -601,8 +601,28 @@ def export_audit_csv(rfx_id: str):
     )
 
 
+@router.get("/rfx/{rfx_id}/comparison.xlsx")
+def export_comparison_xlsx(rfx_id: str, provisional: bool = False):
+    """Compare-page download: multi-vendor price matrix (no award allocations)."""
+    state = load_or_404(rfx_id)
+    counts = snapshots.processing_counts(state)
+    if counts["processing"] and not provisional:
+        return error_fragment(
+            "Vendor responses are still processing. Re-request with ?provisional=1 to download a provisional export, "
+            "or wait until all responses finish.",
+            409,
+        )
+    data = export.comparison_workbook(state, provisional=provisional or bool(counts["processing"]))
+    return Response(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="comparison-{rfx_id}.xlsx"'},
+    )
+
+
 @router.get("/rfx/{rfx_id}/export.xlsx")
 def export_xlsx(rfx_id: str, provisional: bool = False):
+    """Award-page download: line→awarded vendor and non-awarded/regret summary."""
     state = load_or_404(rfx_id)
     counts = snapshots.processing_counts(state)
     if counts["processing"] and not provisional:
