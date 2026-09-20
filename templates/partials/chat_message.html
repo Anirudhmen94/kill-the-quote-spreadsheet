@@ -2,7 +2,16 @@
   <div class="flex justify-end">
     <div class="max-w-[85%] rounded-2xl rounded-br-sm bg-slate-900 text-white px-4 py-2.5 text-sm whitespace-pre-wrap">{{ m.question }}</div>
   </div>
-  <div class="rounded-2xl rounded-bl-sm border border-slate-200 bg-white p-4">
+  <div class="rounded-2xl rounded-bl-sm border bg-white p-4 {% if m.status == 'stale' or m.legacy %}border-amber-300 ring-1 ring-amber-200{% elif m.status == 'failed' %}border-rose-300{% else %}border-slate-200{% endif %}">
+    {% if m.status == 'stale' or m.legacy %}
+    <div class="mb-3 rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2">
+      <strong>STALE</strong> — {{ m.stale_reason or 'Vendor data changed after this answer was generated.' }}
+      <div class="mt-1">Stale answer · Vendor data changed after this answer was generated</div>
+    </div>
+    {% elif m.status == 'failed' %}
+    <div class="mb-3 rounded-md border border-rose-300 bg-rose-50 text-rose-900 text-xs px-3 py-2">This answer failed to generate.</div>
+    {% endif %}
+
     <div class="prose-sm text-sm text-slate-800 leading-relaxed">{{ m.answer | md | safe }}</div>
 
     {% if m.charts %}
@@ -45,14 +54,28 @@
     {% endif %}
 
     <div class="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+      <div class="font-mono text-[11px]">
+        Based on vendor data version {{ m.vendor_data_version if m.vendor_data_version is not none else 'legacy' }}
+        · Calculation snapshot {{ m.calculation_snapshot_id or '—' }}
+        · Generated {{ (m.at or '')[:16].replace('T',' ') }} UTC
+      </div>
       <details class="inline">
         <summary class="cursor-pointer hover:text-slate-800">Tool trace ({{ m.trace|length }} call{{ 's' if m.trace|length != 1 }})</summary>
         <ol class="mt-1 list-decimal pl-4 space-y-0.5 font-mono">{% for t in m.trace %}<li class="{% if not t.ok %}text-rose-700{% endif %}">{{ t.tool }}({{ t.input|tojson }})</li>{% endfor %}</ol>
       </details>
-      <span class="ml-auto">{{ m.at[:16].replace('T',' ') if m.at else '' }} UTC</span>
-      <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}" hx-target="#chat-error">
-        <button class="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 px-2.5 py-1 font-medium hover:bg-emerald-100">Save as award recommendation</button>
-      </form>
+      <span class="ml-auto flex flex-wrap items-center gap-2">
+        {% if m.status == 'stale' or m.legacy %}
+        <form hx-post="/rfx/{{ state.id }}/ask/rerun/{{ idx }}" hx-target="#chat" hx-swap="beforeend" hx-indicator="#ask-busy">
+          <button class="rounded border border-sky-300 bg-sky-50 text-sky-900 px-2.5 py-1 font-medium hover:bg-sky-100">Rerun with latest data</button>
+        </form>
+        <button disabled title="This answer was generated before the latest vendor data was processed. Rerun the question before saving it as an award recommendation."
+          class="rounded border border-slate-200 bg-slate-100 text-slate-400 px-2.5 py-1 font-medium cursor-not-allowed">Save as award recommendation</button>
+        {% else %}
+        <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}" hx-target="#chat-error">
+          <button class="rounded border border-emerald-300 bg-emerald-50 text-emerald-800 px-2.5 py-1 font-medium hover:bg-emerald-100">Save as award recommendation</button>
+        </form>
+        {% endif %}
+      </span>
     </div>
   </div>
 </div>

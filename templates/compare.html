@@ -20,6 +20,19 @@
 </div>
 {% else %}
 
+{% if counts and counts.processing %}
+<div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
+  <strong>Provisional comparison</strong> · {{ counts.processing }} vendor response{{ 's' if counts.processing != 1 }} {{ 'are' if counts.processing != 1 else 'is' }} still processing.
+  Comparison is provisional while vendor responses are still processing.
+</div>
+{% else %}
+<div class="mt-4 text-xs text-slate-600">
+  Vendor data version <span class="font-mono font-medium">{{ vendor_data_version }}</span>
+  · {{ counts.extracted if counts else extracted|length }} of {{ counts.with_files if counts else cmp.vendors|length }} responses extracted
+  · Extraction complete{% if counts and counts.failed %} with {{ counts.failed }} failure{{ 's' if counts.failed != 1 }}{% endif %}
+</div>
+{% endif %}
+
 <div class="mt-4 flex flex-wrap gap-2 text-xs">
   {% for k, label, cls in [('ok','ok: read directly, evidence verified','bg-emerald-100 text-emerald-800'),('converted','converted: FX / per-100 / per-kg, shown in cell','bg-sky-100 text-sky-800'),('reviewed','reviewed: buyer accepted or overrode','bg-violet-100 text-violet-800'),('needs_review','needs review: ambiguous or unverified, excluded from totals','bg-amber-100 text-amber-800'),('unresolved','unresolved: refers to data we do not have','bg-rose-100 text-rose-800'),('missing','missing: not quoted','bg-slate-100 text-slate-600')] %}
   <span class="inline-flex items-center gap-1 rounded px-2 py-0.5 {{ cls }}">{{ label }}</span>

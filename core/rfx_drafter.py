@@ -79,5 +79,10 @@ def new_state(brief: str, rfx: dict) -> dict:
         "reviews": [],
         "chat": [],
         "recommendation": None,
+        "recommendations": [],
+        "vendor_data_version": 0,
+        "vendor_data_versions": [],
+        "calculation_snapshots": [],
+        "version_events": [],
         "ai_log": [],
     }

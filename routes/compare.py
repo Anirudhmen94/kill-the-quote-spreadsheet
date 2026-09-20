@@ -8,7 +8,7 @@ import pymupdf
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
-from core import engine, export, ingest, storage
+from core import engine, export, ingest, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -48,7 +48,17 @@ def _context_lines(text: str, snippet: str, radius: int = 3) -> list[dict]:
 def compare_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     cmp = engine.build_comparison(state)
-    return render(request, "compare.html", state=state, cmp=cmp, active="compare")
+    counts = snapshots.processing_counts(state)
+    # Record a comparison snapshot when we have at least one extraction
+    if any(v.get("extraction") for v in state["vendors"]):
+        snapshots.create_calculation_snapshot(
+            state,
+            "comparison",
+            parameters={"provisional": bool(counts["processing"])},
+            result={"vendor_count": len(cmp["vendors"]), "line_count": cmp["line_count"]},
+        )
+        storage.save_state(rfx_id, state)
+    return render(request, "compare.html", state=state, cmp=cmp, counts=counts, active="compare")
 
 
 @router.get("/rfx/{rfx_id}/evidence/{vendor_id}/{line_no}", response_class=HTMLResponse)
@@ -132,6 +142,10 @@ def review(request: Request, rfx_id: str, vendor_id: str, line_no: int, action: 
         if not note.strip():
             return error_fragment("A note is required so the audit log explains the decision.", 400)
         state["reviews"].append({"vendor_id": vendor_id, "vendor_name": vendor["name"], "line_no": line_no, "action": action, "value_inr": val, "note": note.strip(), "at": now_iso()})
+        reason = "review_accepted" if action == "accept" else "review_overridden"
+        snapshots.bump_vendor_data_version(state, reason, affected_vendor_ids=[vendor_id])
+    else:
+        snapshots.bump_vendor_data_version(state, "review_cleared", affected_vendor_ids=[vendor_id])
     storage.save_state(rfx_id, state)
     resp = HTMLResponse("")
     resp.headers["HX-Refresh"] = "true"
@@ -150,25 +164,69 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 @router.get("/rfx/{rfx_id}/award", response_class=HTMLResponse)
 def award_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
-    cmp = engine.build_comparison(state)
-    split = engine.cheapest_per_line(cmp, None, False, False) if any(v.get("extraction") for v in state["vendors"]) else None
-    return render(request, "award.html", state=state, cmp=cmp, split=split, active="award")
+    live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
+    # Persist the live snapshot so exports can reference the same id
+    if live.get("available"):
+        storage.save_state(rfx_id, state)
+    cmp = live.get("cmp") or engine.build_comparison(state)
+    split = live.get("split")
+    current_rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
+    historical = [r for r in state.get("recommendations", []) if r.get("status") in ("stale", "superseded") or r.get("legacy")]
+    # Also include the legacy single recommendation if not already in list
+    return render(
+        request,
+        "award.html",
+        state=state,
+        cmp=cmp,
+        split=split,
+        live=live,
+        current_rec=current_rec,
+        historical_recs=historical,
+        active="award",
+    )
 
 
 @router.get("/rfx/{rfx_id}/export.xlsx")
-def export_xlsx(rfx_id: str):
+def export_xlsx(rfx_id: str, provisional: bool = False):
     state = load_or_404(rfx_id)
-    data = export.award_workbook(state)
+    counts = snapshots.processing_counts(state)
+    if counts["processing"] and not provisional:
+        return error_fragment(
+            "Vendor responses are still processing. Re-request with ?provisional=1 to download a provisional export, "
+            "or wait until all responses finish.",
+            409,
+        )
+    data = export.award_workbook(state, provisional=provisional or bool(counts["processing"]))
     return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="award-{rfx_id}.xlsx"'})
 
 
 @router.get("/rfx/{rfx_id}/export.csv")
-def export_csv(rfx_id: str):
+def export_csv(rfx_id: str, provisional: bool = False):
     state = load_or_404(rfx_id)
-    return Response(export.comparison_csv(state), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="comparison-{rfx_id}.csv"'})
+    counts = snapshots.processing_counts(state)
+    if counts["processing"] and not provisional:
+        return error_fragment(
+            "Vendor responses are still processing. Re-request with ?provisional=1 for a provisional CSV.",
+            409,
+        )
+    return Response(
+        export.comparison_csv(state, provisional=provisional or bool(counts["processing"])),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="comparison-{rfx_id}.csv"'},
+    )
 
 
 @router.get("/rfx/{rfx_id}/memo.md")
-def export_memo(rfx_id: str):
+def export_memo(rfx_id: str, provisional: bool = False):
     state = load_or_404(rfx_id)
-    return Response(export.award_memo_md(state), media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="award-memo-{rfx_id}.md"'})
+    counts = snapshots.processing_counts(state)
+    if counts["processing"] and not provisional:
+        return error_fragment(
+            "Vendor responses are still processing. Re-request with ?provisional=1 for a provisional memo.",
+            409,
+        )
+    return Response(
+        export.award_memo_md(state, provisional=provisional or bool(counts["processing"])),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="award-memo-{rfx_id}.md"'},
+    )

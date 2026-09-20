@@ -16,7 +16,24 @@ Built for the Aerchain "Kill the Quote Spreadsheet" product assignment. The AI l
 | Read | Each file becomes *anchored text* (cell refs, page numbers, paragraph numbers, image line numbers). Photos are transcribed by the vision model. One structured extraction call per vendor maps rows to RFx lines and reports every price, term, questionnaire answer and certificate **with a verbatim evidence snippet**. Every snippet is then checked against the source text; anything not found verbatim is downgraded to *needs review*. | AI reads; code grounds |
 | Compare | Per-100 / per-1000 / per-bundle / per-kg quotes are converted to INR per piece with the conversion shown in the cell; USD is converted at a fixed, dated rate. Cells are `ok`, `converted`, `needs review`, `unresolved`, `missing`, or `reviewed`. Click any cell for the evidence drawer: snippet, location, PDF page render with highlight, the photo, the conversion arithmetic, and an accept/override form that writes to an audit log. | Code |
 | Ask | The analyst answers questions by calling deterministic engine functions (cheapest per line, like-for-like totals, single-vendor vs split awards, questionnaire gate, sensitivity, calculator). Every tool result is rendered as a table under the answer; caveats are generated from the data, not by the model. | AI chooses and explains; code computes |
-| Award | Save any answer as the recommendation. Export an Excel workbook (summary, award by line, colour-coded comparison with conversion notes, flags, vendors, evidence index, review log), a Markdown memo, and a CSV. | Code |
+| Award | Save a **current** analyst answer as the recommendation (stale answers are blocked). Live calculation, current recommendation, and historical/stale recommendations are shown separately. Export workbook / memo / CSV stamped with vendor-data version and snapshot id. | Code |
+
+
+## Snapshot consistency (data integrity)
+
+Analyst answers and award recommendations are tied to a monotonically increasing **vendor-data version** and a reproducible **calculation snapshot** (`inputHash` over prices, FX, reviews, questionnaire, etc.).
+
+| Event | Effect |
+|---|---|
+| Vendor extracted / re-read / uploaded / deleted | New vendor-data version; prior Ask answers and saved recommendations marked **stale** |
+| Buyer accept / override / clear on a flagged cell | Same — new version; dependents go stale |
+| Ask a question | Fresh snapshot at the current version; answer stores `vendorDataVersion` + `calculationSnapshotId` |
+| Save as award recommendation | Allowed only if the answer is **current** (same version). Stale answers show a blocking message and a **Rerun with latest data** button |
+| Export workbook / memo / CSV | Stamped with RFx id, timestamp, version, snapshot id, current/historical/provisional; blocked while processing unless `?provisional=1` |
+
+UI: a data-status banner on RFx / Inbox / Compare / Ask / Award distinguishes Current, Processing, Stale, and Current-with-unresolved. The Award page separates **current live calculation**, **current saved recommendation**, and **historical (stale)** recommendations.
+
+Automated coverage: `python tests/test_snapshots.py` (early-answer staleness, rerun/current save, Award↔memo agreement, processing banner, review bump, export metadata, legacy migration, failed-extraction preserve, input-hash, context validation).
 
 ## Run locally
 
@@ -29,6 +46,10 @@ uvicorn app:app --port 8517 --reload
 ```
 
 Open http://127.0.0.1:8517. Without `BLOB_READ_WRITE_TOKEN` the app stores everything under `data/store/` (git-ignored).
+
+```bash
+python tests/test_snapshots.py   # snapshot consistency acceptance tests
+```
 
 Environment variables:
 
@@ -66,9 +87,11 @@ core/ingest.py         xlsx / pdf / docx / image / email → anchored text
 core/extractor.py      per-vendor structured extraction + evidence grounding
 core/engine.py         deterministic normalisation, FX, coverage, cheapest-per-line, award scenarios, sensitivity, caveats
 core/analyst.py        tool definitions, executor, calculator, table/chart rendering of tool results
-core/export.py         Excel workbook, Markdown memo, CSV
+core/export.py         Excel workbook, Markdown memo, CSV (snapshot-stamped)
+core/snapshots.py      Vendor-data versions, calculation snapshots, invalidation, data-status banner
 core/clarify.py        open-point detection + AI-drafted clarification email (stub-sent)
 core/storage.py        Vercel Blob / local filesystem backends, versioned state
+tests/                 Snapshot consistency acceptance tests
 templates/             Jinja2 + Tailwind (CDN) + HTMX (CDN) + Chart.js (CDN)
 ```
 

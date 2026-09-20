@@ -10,7 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from . import engine, llm, storage
+from . import engine, llm, snapshots, storage
 
 BASE = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
@@ -18,6 +18,7 @@ templates.env.filters["md"] = lambda text: md.markdown(text or "", extensions=["
 templates.env.filters["inr"] = lambda v: engine.fmt_inr(v)
 templates.env.filters["num"] = lambda v: engine.fmt_num(v)
 templates.env.filters["tojson_pretty"] = lambda v: json.dumps(v, indent=2, ensure_ascii=False, default=str)
+templates.env.filters["fmt_updated"] = snapshots.format_updated
 
 
 def render(request: Request, name: str, **ctx) -> HTMLResponse:
@@ -28,7 +29,15 @@ def render(request: Request, name: str, **ctx) -> HTMLResponse:
         "model": llm.model_name(),
         "storage": storage.backend_name(),
         "rfx_id": state.get("id") if isinstance(state, dict) else None,
+        "data_status": None,
+        "version_events": [],
     }
+    if isinstance(state, dict):
+        snapshots.ensure_snapshot_fields(state)
+        context = ctx.get("data_status_context") or ctx.get("active") or "global"
+        base["data_status"] = snapshots.data_status(state, context=context)
+        base["version_events"] = state.get("version_events") or []
+        base["vendor_data_version"] = snapshots.current_version(state)
     base.update(ctx)
     return templates.TemplateResponse(request, name, base)
 
@@ -37,6 +46,7 @@ def load_or_404(rfx_id: str) -> dict:
     state = storage.load_state(rfx_id)
     if not state:
         raise HTTPException(404, "RFx not found")
+    snapshots.ensure_snapshot_fields(state)
     return state
 
 

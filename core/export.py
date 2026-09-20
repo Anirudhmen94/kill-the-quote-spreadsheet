@@ -1,4 +1,8 @@
-"""Exports: award workbook (openpyxl), markdown memo, comparison CSV."""
+"""Exports: award workbook (openpyxl), markdown memo, comparison CSV.
+
+Every export is stamped with RFx id, timestamp, vendor-data version, calculation
+snapshot id, and current/historical/provisional status.
+"""
 from __future__ import annotations
 
 import io
@@ -8,7 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from . import engine
+from . import engine, snapshots
 
 HEAD = PatternFill("solid", fgColor="0F172A")
 STATUS_FILL = {
@@ -38,30 +42,84 @@ def _sheet_from_rows(wb: Workbook, title: str, columns: list[str], rows: list[li
     return ws
 
 
-def award_workbook(state: dict) -> bytes:
+def _ensure_export_snapshot(state: dict, provisional: bool) -> tuple:
+    """Stamp exports with the same calculation snapshot shown on the Award page.
+
+    Prefer the latest current award_scenario / comparison snapshot so the memo
+    and Award page always share an id and totals. Still record an export event
+    snapshot for audit.
+    """
+    snapshots.ensure_snapshot_fields(state)
+    # Ensure a live award snapshot exists so memo and Award agree
+    live = None
+    if any(v.get("extraction") for v in state.get("vendors", [])):
+        live = snapshots.live_award_calculation(state)
+    calc_snap = None
+    if live and live.get("available"):
+        calc_snap = live["snapshot"]
+    else:
+        for s in reversed(state.get("calculation_snapshots", [])):
+            if s.get("status") == "current" and s.get("calculation_type") in ("award_scenario", "comparison", "analyst_answer"):
+                calc_snap = s
+                break
+    meta = snapshots.export_meta(state, snapshot=calc_snap, provisional=provisional)
+    export_snap = snapshots.create_calculation_snapshot(
+        state,
+        "export",
+        parameters={"provisional": provisional, "based_on": (calc_snap or {}).get("id")},
+        result=meta,
+        status="current",
+    )
+    # Primary id exposed to buyers is the calculation snapshot (Award page), not the export event
+    if calc_snap:
+        meta["calculation_snapshot_id"] = calc_snap["id"]
+        meta["export_event_snapshot_id"] = export_snap["id"]
+        return meta, calc_snap
+    meta["calculation_snapshot_id"] = export_snap["id"]
+    return meta, export_snap
+
+
+def award_workbook(state: dict, provisional: bool = False) -> bytes:
+    snapshots.ensure_snapshot_fields(state)
     cmp = engine.build_comparison(state)
-    rec = state.get("recommendation") or {}
+    meta, snap = _ensure_export_snapshot(state, provisional)
+    # Prefer current saved recommendation; fall back to legacy pointer
+    rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
+    if rec is None:
+        rec = state.get("recommendation") or {}
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
     ws["A1"] = f"Award recommendation: {cmp['title']}"
     ws["A1"].font = Font(bold=True, size=14)
-    ws["A2"] = f"RFx {cmp['rfx_id']} · generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
-    ws["A4"] = "Recommendation (analyst answer saved by buyer)"
-    ws["A4"].font = Font(bold=True)
-    ws["A5"] = rec.get("answer") or "No recommendation saved yet. Ask the analyst and click 'Save as award recommendation'."
-    ws["A5"].alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells("A5:H20")
-    ws["A22"] = "Question asked"
-    ws["A22"].font = Font(bold=True)
-    ws["A23"] = rec.get("question", "")
-    ws["A25"] = "Caveats"
-    ws["A25"].font = Font(bold=True)
-    for i, c in enumerate(rec.get("caveats") or engine.caveats_for(cmp, None, None, False), start=26):
+    status_line = (
+        f"RFx {cmp['rfx_id']} · exported {meta['export_timestamp']} · "
+        f"vendor data version {meta['vendor_data_version']} · snapshot {meta['calculation_snapshot_id']} · "
+        f"export status: {meta['export_status']} · "
+        f"vendors processed {meta['vendors_processed']} · still processing {meta['vendors_still_processing']} · "
+        f"review {meta['needs_review']} · unresolved {meta['unresolved']}"
+    )
+    ws["A2"] = status_line
+    if meta.get("provisional"):
+        ws["A3"] = "PROVISIONAL EXPORT — vendor responses were still processing at export time."
+        ws["A3"].font = Font(bold=True, color="B45309")
+    row0 = 5 if meta.get("provisional") else 4
+    ws.cell(row=row0, column=1, value="Recommendation (analyst answer saved by buyer)").font = Font(bold=True)
+    answer = rec.get("recommendation_markdown") or rec.get("answer") or "No recommendation saved yet. Ask the analyst and click 'Save as award recommendation'."
+    if rec.get("status") in ("stale", "superseded") or rec.get("legacy"):
+        answer = (
+            f"[HISTORICAL / STALE — vendor data version {rec.get('vendor_data_version')}]\n\n" + answer
+        )
+    cell = ws.cell(row=row0 + 1, column=1, value=answer)
+    cell.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=row0 + 1, start_column=1, end_row=row0 + 16, end_column=8)
+    ws.cell(row=row0 + 18, column=1, value="Question asked").font = Font(bold=True)
+    ws.cell(row=row0 + 19, column=1, value=rec.get("question", ""))
+    ws.cell(row=row0 + 21, column=1, value="Caveats").font = Font(bold=True)
+    for i, c in enumerate(rec.get("caveats") or engine.caveats_for(cmp, None, None, False), start=row0 + 22):
         ws.cell(row=i, column=1, value=c)
     ws.column_dimensions["A"].width = 110
 
-    # Award by line: cheapest per usable, unless the saved recommendation carried a split table
     cp = engine.cheapest_per_line(cmp, None, False, False)
     _sheet_from_rows(
         wb,
@@ -73,10 +131,10 @@ def award_workbook(state: dict) -> bytes:
     ws2 = wb["Award by line"]
     ws2.cell(row=len(cp["rows"]) + 3, column=6, value="Total")
     ws2.cell(row=len(cp["rows"]) + 3, column=7, value=cp["total_extended_inr"]).font = Font(bold=True)
+    ws2.cell(row=len(cp["rows"]) + 5, column=1, value=f"Snapshot {snap['id']} · vendor data version {meta['vendor_data_version']} · {meta['export_status']}")
     if cp["uncovered_lines"]:
         ws2.cell(row=len(cp["rows"]) + 4, column=1, value=f"Lines without a usable quote: {cp['uncovered_lines']}")
 
-    # Full comparison with status colouring
     cols = ["Line", "SKU", "Description", "Board", "Annual qty"] + [v["name"] for v in cmp["vendors"]]
     ws3 = _sheet_from_rows(wb, "Comparison", cols, [], {"Description": 50})
     for r, ln in enumerate(cmp["lines"], start=2):
@@ -94,14 +152,11 @@ def award_workbook(state: dict) -> bytes:
     legend_row = len(cmp["lines"]) + 3
     ws3.cell(row=legend_row, column=1, value="Legend: green ok · blue converted · purple reviewed · amber needs review · red unresolved · grey missing. Hover a cell for conversion notes.")
 
-    # Flags and caveats
     fl = engine.list_flags(cmp)
     _sheet_from_rows(wb, "Flags", ["Line", "Vendor", "Status", "Flags", "Reason", "Conversion", "Raw price", "Currency", "Basis", "Unit INR", "Confidence"], [[i["line_no"], i["vendor"], i["status"], ", ".join(i["flags"]), i["reason"], i["conversion"], i["raw_price"], i["currency"], i["basis"], i["unit_inr"], i["confidence"]] for i in fl["items"]], {"Reason": 60, "Conversion": 60, "Vendor": 28})
 
-    # Vendor summary
     _sheet_from_rows(wb, "Vendors", ["Vendor", "Usable lines", "Needs review", "Unresolved", "Missing", "Questionnaire", "Knockouts open", "Knockouts failed", "Freight", "Payment", "Validity", "Discount", "Avg confidence"], [[v["name"], v["usable"], v["counts"].get("needs_review", 0), v["counts"].get("unresolved", 0), v["counts"].get("missing", 0), v["questionnaire"]["overall"], ", ".join(v["questionnaire"]["knockout_open"]), ", ".join(v["questionnaire"]["knockout_failed"]), v["commercial"].get("freight_text"), v["commercial"].get("payment"), v["commercial"].get("validity"), v["commercial"].get("discount_condition"), v["avg_confidence"]] for v in cmp["vendors"]], {"Vendor": 28, "Freight": 40, "Payment": 30, "Discount": 50})
 
-    # Evidence index
     ev_rows = []
     for ln in cmp["lines"]:
         for v in cmp["vendors"]:
@@ -111,28 +166,79 @@ def award_workbook(state: dict) -> bytes:
                 ev_rows.append([ln["line_no"], v["name"], c.get("raw_price"), c.get("currency"), c.get("basis"), ev.get("file_name"), ev.get("location"), ev.get("snippet"), "yes" if ev.get("verified") else "NO"])
     _sheet_from_rows(wb, "Evidence", ["Line", "Vendor", "Raw price", "Currency", "Basis", "File", "Location", "Verbatim snippet", "Verified in source"], ev_rows, {"Vendor": 28, "File": 34, "Location": 20, "Verbatim snippet": 70})
 
-    # Reviews / overrides log
     _sheet_from_rows(wb, "Review log", ["When", "Vendor", "Line", "Action", "Value INR", "Note"], [[r.get("at"), r.get("vendor_name"), r["line_no"], r["action"], r.get("value_inr"), r.get("note")] for r in state.get("reviews", [])], {"Note": 60})
+
+    _sheet_from_rows(
+        wb,
+        "Snapshot",
+        ["Field", "Value"],
+        [
+            ["RFx ID", meta["rfx_id"]],
+            ["Export timestamp", meta["export_timestamp"]],
+            ["Vendor data version", meta["vendor_data_version"]],
+            ["Calculation snapshot ID", meta["calculation_snapshot_id"]],
+            ["Export status", meta["export_status"]],
+            ["Vendors processed", meta["vendors_processed"]],
+            ["Still processing", meta["vendors_still_processing"]],
+            ["Needs review", meta["needs_review"]],
+            ["Unresolved", meta["unresolved"]],
+            ["Input hash", snap.get("input_hash")],
+        ],
+    )
 
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def comparison_csv(state: dict) -> bytes:
+def comparison_csv(state: dict, provisional: bool = False) -> bytes:
+    snapshots.ensure_snapshot_fields(state)
+    meta, snap = _ensure_export_snapshot(state, provisional)
     df = engine.to_dataframe(engine.build_comparison(state))
-    return df.to_csv(index=False).encode("utf-8")
+    # Prepend a metadata header row as comments via a leading block
+    header = (
+        f"# RFx {meta['rfx_id']} · vendor_data_version={meta['vendor_data_version']} · "
+        f"snapshot={meta['calculation_snapshot_id']} · status={meta['export_status']} · "
+        f"exported={meta['export_timestamp']}\n"
+    )
+    if meta.get("provisional"):
+        header += "# PROVISIONAL EXPORT — vendor responses were still processing at export time.\n"
+    return (header + df.to_csv(index=False)).encode("utf-8")
 
 
-def award_memo_md(state: dict) -> str:
+def award_memo_md(state: dict, provisional: bool = False) -> str:
+    snapshots.ensure_snapshot_fields(state)
     cmp = engine.build_comparison(state)
-    rec = state.get("recommendation") or {}
+    meta, snap = _ensure_export_snapshot(state, provisional)
+    rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
+    if rec is None:
+        rec = state.get("recommendation") or {}
+    # Live calculation must agree with Award page
     cp = engine.cheapest_per_line(cmp, None, False, False)
-    out = [f"# Award recommendation: {cmp['title']}", "", f"RFx `{cmp['rfx_id']}` · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", ""]
-    out += ["## Recommendation", "", rec.get("answer") or "_No recommendation saved yet._", ""]
+    out = [f"# Award recommendation: {cmp['title']}", ""]
+    if meta.get("provisional"):
+        out += ["> **PROVISIONAL EXPORT — vendor responses were still processing at export time.**", ""]
+    out += [
+        f"RFx `{cmp['rfx_id']}` · {meta['export_timestamp']}",
+        f"Vendor data version **{meta['vendor_data_version']}** · Calculation snapshot `{meta['calculation_snapshot_id']}` · Export status: **{meta['export_status']}**",
+        f"Vendors processed: {meta['vendors_processed']} · Still processing: {meta['vendors_still_processing']} · Review: {meta['needs_review']} · Unresolved: {meta['unresolved']}",
+        "",
+    ]
+    status = rec.get("status")
+    if status == "current":
+        out += ["## Current award recommendation", ""]
+    elif rec:
+        out += ["## Historical recommendation — not valid for the current vendor dataset", ""]
+        out.append(f"_Stale reason:_ {rec.get('stale_reason', 'Vendor data changed after this was saved.')}")
+        out.append("")
+    else:
+        out += ["## Recommendation", ""]
+    out += [rec.get("recommendation_markdown") or rec.get("answer") or "_No recommendation saved yet._", ""]
     if rec.get("question"):
         out += [f"_Question asked:_ {rec['question']}", ""]
-    out += ["## Cheapest-per-line split (usable quotes only)", "", f"Total extended annual value: **{engine.fmt_inr(cp['total_extended_inr'])}**", ""]
+        if rec.get("calculation_snapshot_id"):
+            out += [f"_Recommendation snapshot:_ `{rec.get('calculation_snapshot_id')}` · vendor data version {rec.get('vendor_data_version')}", ""]
+    out += ["## Current live calculation (cheapest-per-line, usable quotes only)", "", f"Total extended annual value: **{engine.fmt_inr(cp['total_extended_inr'])}** · Snapshot `{snap['id']}`", ""]
     for name, s in cp["share_by_vendor"].items():
         out.append(f"- {name}: {s['lines']} lines, {engine.fmt_inr(s['extended_inr'])}")
     if cp["uncovered_lines"]:

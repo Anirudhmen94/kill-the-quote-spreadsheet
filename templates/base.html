@@ -66,6 +66,7 @@
 
   <main class="flex-1">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      {% if rfx_id and data_status %}{% include "partials/data_status_banner.html" %}{% endif %}
       {% block content %}{% endblock %}
     </div>
   </main>

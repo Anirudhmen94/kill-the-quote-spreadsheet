@@ -1,0 +1,33 @@
+{# Compact, highly visible data-status banner. Expects data_status dict from web.render. #}
+{% if data_status %}
+{% set lvl = data_status.level %}
+<div class="mb-4 rounded-lg border text-sm px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1
+  {% if lvl == 'ok' %}border-emerald-200 bg-emerald-50 text-emerald-900
+  {% elif lvl == 'warn' %}border-amber-300 bg-amber-50 text-amber-950
+  {% elif lvl == 'danger' %}border-rose-300 bg-rose-50 text-rose-950
+  {% else %}border-slate-200 bg-slate-50 text-slate-800{% endif %}">
+  <span class="inline-flex items-center gap-1.5 font-medium">
+    <span class="h-2 w-2 rounded-full
+      {% if lvl == 'ok' %}bg-emerald-500
+      {% elif lvl == 'warn' %}bg-amber-500
+      {% elif lvl == 'danger' %}bg-rose-500
+      {% else %}bg-slate-400{% endif %}"></span>
+    Data status: {{ data_status.label }}
+  </span>
+  <span class="opacity-90">{{ data_status.text }}</span>
+  {% if data_status.updated_at %}
+  <span class="text-xs opacity-70 ml-auto">Updated {{ data_status.updated_at | fmt_updated }}</span>
+  {% endif %}
+  {% if data_status.detail %}
+  <div class="w-full text-xs opacity-90">{{ data_status.detail }}</div>
+  {% endif %}
+</div>
+{% endif %}
+{% if version_events %}
+{% set latest = version_events[-1] %}
+{% if latest and active == 'inbox' %}
+<div class="mb-3 rounded-md border border-sky-200 bg-sky-50 text-sky-900 text-xs px-3 py-2">
+  {{ latest.message }}
+</div>
+{% endif %}
+{% endif %}

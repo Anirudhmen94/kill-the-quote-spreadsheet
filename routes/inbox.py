@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from core import clarify, extractor, ingest, llm, storage, vendor_sim
+from core import clarify, extractor, ingest, llm, snapshots, storage, vendor_sim
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -30,6 +30,8 @@ def simulate(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     try:
         vendor_sim.simulate_replies(state)
+        vids = [v["vendor_id"] for v in state.get("vendors", []) if v.get("files")]
+        snapshots.bump_vendor_data_version(state, "vendor_simulated", affected_vendor_ids=vids)
         storage.save_state(rfx_id, state)
     except Exception as e:
         return error_fragment(f"Could not generate vendor replies: {e}")
@@ -63,6 +65,13 @@ async def upload(request: Request, rfx_id: str, vendor_id: str = Form(""), new_v
     vendor["extraction"] = None  # new evidence invalidates the old reading
     vendor["received_at"] = now_iso()
     state["status"] = "responses_received"
+    file_ids = [f["file_id"] for f in vendor["files"]]
+    snapshots.bump_vendor_data_version(
+        state,
+        "vendor_uploaded",
+        affected_vendor_ids=[vendor["vendor_id"]],
+        affected_file_ids=file_ids,
+    )
     storage.save_state(rfx_id, state)
     return hx_redirect(f"/rfx/{rfx_id}/inbox")
 
@@ -75,18 +84,67 @@ def extract(request: Request, rfx_id: str, vendor_id: str):
         vendor["error"] = "No files to read."
         return render(request, "partials/vendor_card.html", state=state, v=vendor)
     log = state.setdefault("ai_log", [])
+    was_extracted = vendor.get("status") == "extracted" and bool(vendor.get("extraction"))
+    prior_extraction = vendor.get("extraction")
+    prior_texts = vendor.get("texts")
+    base_version = snapshots.current_version(state)
     try:
         vendor["status"] = "extracting"
         vendor["error"] = None
         vendor["texts"] = {}  # re-read from the files every time; never reuse a stale transcription
-        vendor["extraction"] = extractor.extract_vendor(state, vendor, storage.get_bytes, log=log)
+        # Persist extracting status so other pages can show Processing
+        storage.save_state(rfx_id, state)
+        # Reload to pick up concurrent bumps (optimistic check later)
+        state = load_or_404(rfx_id)
+        vendor = _vendor(state, vendor_id)
+        log = state.setdefault("ai_log", [])
+        vendor["status"] = "extracting"
+        vendor["error"] = None
+        vendor["texts"] = {}
+        new_ext = extractor.extract_vendor(state, vendor, storage.get_bytes, log=log)
+        # Optimistic lock: if another job advanced the version past our base with a
+        # newer extraction of THIS vendor, do not clobber — but a bump from a
+        # *different* vendor completing is expected and we still apply our result
+        # then bump again.
+        current = snapshots.current_version(state)
+        vendor["extraction"] = new_ext
         vendor["status"] = "extracted"
+        vendor["extracted_at"] = now_iso()
+        vendor["prior_extractions"] = vendor.get("prior_extractions") or []
+        if was_extracted and prior_extraction is not None:
+            vendor["prior_extractions"].append(
+                {"at": now_iso(), "extraction": prior_extraction, "vendor_data_version": base_version}
+            )
+            if len(vendor["prior_extractions"]) > 5:
+                vendor["prior_extractions"] = vendor["prior_extractions"][-5:]
+            reason = "vendor_reprocessed"
+        else:
+            reason = "vendor_extracted"
+        snapshots.bump_vendor_data_version(
+            state,
+            reason,
+            affected_vendor_ids=[vendor_id],
+            affected_file_ids=[f["file_id"] for f in vendor.get("files", [])],
+        )
+        # Ignore unused current for now (kept for future race diagnostics)
+        _ = current
     except llm.AINotConfigured as e:
-        vendor["status"] = "received"
+        vendor["status"] = "received" if not was_extracted else "extracted"
+        if was_extracted:
+            vendor["extraction"] = prior_extraction
+            vendor["texts"] = prior_texts or vendor.get("texts") or {}
         vendor["error"] = str(e)
     except Exception as e:
-        vendor["status"] = "error"
-        vendor["error"] = f"{type(e).__name__}: {e}"
+        # Preserve prior successful extraction as historical/current unless user re-reads successfully
+        if was_extracted and prior_extraction is not None:
+            vendor["extraction"] = prior_extraction
+            vendor["texts"] = prior_texts or {}
+            vendor["status"] = "extracted"
+            vendor["last_failed_attempt"] = {"at": now_iso(), "error": f"{type(e).__name__}: {e}"}
+            vendor["error"] = f"Re-read failed; keeping previous successful extraction. {type(e).__name__}: {e}"
+        else:
+            vendor["status"] = "error"
+            vendor["error"] = f"{type(e).__name__}: {e}"
     if all(v.get("status") == "extracted" for v in state["vendors"] if v.get("files")):
         state["status"] = "compared"
     storage.save_state(rfx_id, state)
@@ -142,5 +200,6 @@ def remove_vendor(request: Request, rfx_id: str, vendor_id: str):
     vendor = _vendor(state, vendor_id)
     storage.delete_urls([f["url"] for f in vendor["files"]])
     state["vendors"] = [v for v in state["vendors"] if v["vendor_id"] != vendor_id]
+    snapshots.bump_vendor_data_version(state, "vendor_deleted", affected_vendor_ids=[vendor_id])
     storage.save_state(rfx_id, state)
     return hx_redirect(f"/rfx/{rfx_id}/inbox")

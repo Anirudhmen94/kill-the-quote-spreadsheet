@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Award · {{ state.rfx.title }}{% endblock %}
 {% block content %}
-{% set rec = state.recommendation %}
+{% set rec = current_rec %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="text-2xl font-semibold tracking-tight">Award recommendation</h1>
@@ -17,32 +17,31 @@
 
 <div class="mt-6 grid lg:grid-cols-3 gap-6">
   <section class="lg:col-span-2 space-y-6">
-    <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-        <span class="font-medium">Saved recommendation</span>
-        {% if rec %}<span class="text-xs text-slate-500">saved {{ rec.saved_at[:16].replace('T',' ') }} UTC</span>{% endif %}
-      </div>
-      {% if rec %}
-      <div class="px-4 py-3">
-        <div class="text-xs text-slate-500 mb-2">In answer to: “{{ rec.question }}”</div>
-        <div class="prose-sm text-sm text-slate-800">{{ rec.answer | md | safe }}</div>
-        {% if rec.caveats %}<ul class="mt-3 list-disc pl-5 text-xs text-amber-900 space-y-0.5">{% for c in rec.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
-      </div>
-      {% else %}
-      <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/ask" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
-      {% endif %}
-    </div>
 
-    {% if split %}
+    {# ---- Current live calculation ---- #}
+    {% if live and live.available %}
     <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-        <span class="font-medium">Cheapest-per-line split (usable quotes only)</span>
-        <span class="text-sm font-semibold tabular-nums">{{ split.total_extended_inr|inr }} / yr</span>
+      <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          {% if rec and rec.status == 'current' %}
+          <div class="font-medium">Current award recommendation · Snapshot {{ rec.calculation_snapshot_id or live.snapshot.id }}</div>
+          {% else %}
+          <div class="font-medium">Current calculation — recommendation not yet saved</div>
+          {% endif %}
+          <div class="text-xs text-slate-500 mt-0.5 font-mono">
+            Vendor data version {{ live.vendor_data_version }}
+            · Snapshot {{ live.snapshot.id }}
+            · {{ live.created_at[:16].replace('T',' ') }} UTC
+            · Strategy: {{ live.strategy }}
+          </div>
+        </div>
+        <span class="text-sm font-semibold tabular-nums">{{ live.total_extended_inr|inr }} / yr · {{ live.covered_line_count }} lines covered</span>
       </div>
       <div class="px-4 py-3 flex flex-wrap gap-2 text-xs">
-        {% for name, s in split.share_by_vendor.items() %}<span class="rounded bg-slate-100 px-2 py-1">{{ name }}: {{ s.lines }} lines · {{ s.extended_inr|inr }}</span>{% endfor %}
-        {% if split.uncovered_lines %}<span class="rounded bg-rose-100 text-rose-800 px-2 py-1">No usable quote: lines {{ split.uncovered_lines|join(', ') }}</span>{% endif %}
+        {% for name, s in live.share_by_vendor.items() %}<span class="rounded bg-slate-100 px-2 py-1">{{ name }}: {{ s.lines }} lines · {{ s.extended_inr|inr }}</span>{% endfor %}
+        {% if live.uncovered_lines %}<span class="rounded bg-rose-100 text-rose-800 px-2 py-1">No usable quote: lines {{ live.uncovered_lines|join(', ') }}</span>{% endif %}
       </div>
+      {% if split %}
       <div class="overflow-x-auto">
         <table class="w-full text-xs">
           <thead class="bg-slate-50 text-slate-600"><tr><th class="px-2 py-1.5 text-left">#</th><th class="px-2 py-1.5 text-left">Line</th><th class="px-2 py-1.5 text-right">Qty</th><th class="px-2 py-1.5 text-left">Award to</th><th class="px-2 py-1.5 text-right">₹/pc</th><th class="px-2 py-1.5 text-right">Extended</th><th class="px-2 py-1.5 text-left">Runner-up</th><th class="px-2 py-1.5 text-right">Gap</th></tr></thead>
@@ -61,6 +60,67 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ---- Current saved recommendation ---- #}
+    {% if rec and rec.status == 'current' %}
+    <div class="rounded-lg border border-emerald-200 bg-white">
+      <div class="px-4 py-3 border-b border-emerald-100 flex items-center justify-between bg-emerald-50/50">
+        <span class="font-medium text-emerald-950">Current award recommendation · Snapshot {{ rec.calculation_snapshot_id or '—' }}</span>
+        <span class="text-xs text-slate-500">saved {{ (rec.saved_at or rec.created_at or '')[:16].replace('T',' ') }} UTC · v{{ rec.vendor_data_version }}</span>
+      </div>
+      <div class="px-4 py-3">
+        <div class="text-xs text-slate-500 mb-2">In answer to: “{{ rec.question }}”</div>
+        <div class="prose-sm text-sm text-slate-800">{{ (rec.recommendation_markdown or rec.answer) | md | safe }}</div>
+        {% if rec.caveats %}<ul class="mt-3 list-disc pl-5 text-xs text-amber-900 space-y-0.5">{% for c in rec.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+      </div>
+    </div>
+    {% elif not rec %}
+    <div class="rounded-lg border border-slate-200 bg-white">
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Current calculation — recommendation not yet saved</div>
+      <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/ask" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
+    </div>
+    {% endif %}
+
+    {# ---- Historical / stale recommendations ---- #}
+    {% if historical_recs %}
+    <div class="space-y-3">
+      <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide">Historical recommendations</h2>
+      {% for h in historical_recs|reverse %}
+      <div class="rounded-lg border border-amber-300 bg-amber-50/40">
+        <div class="px-4 py-3 border-b border-amber-200 flex flex-wrap items-center justify-between gap-2">
+          <span class="font-medium text-amber-950">Historical recommendation — stale</span>
+          <span class="text-xs text-amber-900">v{{ h.vendor_data_version if h.vendor_data_version is not none else 'legacy' }} · {{ (h.saved_at or h.created_at or '')[:16].replace('T',' ') }} UTC</span>
+        </div>
+        <div class="px-4 py-3 text-sm">
+          <div class="rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2 mb-3">
+            <strong>This recommendation is stale.</strong>
+            It was generated from vendor data version {{ h.vendor_data_version if h.vendor_data_version is not none else 'unknown (pre-snapshot)' }}.
+            The current data is version {{ vendor_data_version }}.
+            {% if h.stale_reason %}<div class="mt-1">{{ h.stale_reason }}</div>{% endif %}
+            <div class="mt-1">Rerun the analyst question and save a new recommendation before using this for a decision.</div>
+            <div class="mt-1 font-medium">Historical recommendation — not valid for the current vendor dataset</div>
+          </div>
+          <div class="text-xs text-slate-500 mb-2">In answer to: “{{ h.question }}”</div>
+          <div class="prose-sm text-sm text-slate-700 opacity-90">{{ (h.recommendation_markdown or h.answer) | md | safe }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# Stale single recommendation that wasn't migrated into historical list #}
+    {% if state.recommendation and state.recommendation.status != 'current' and not historical_recs %}
+    <div class="rounded-lg border border-amber-300 bg-amber-50/40">
+      <div class="px-4 py-3 border-b border-amber-200 font-medium text-amber-950">Historical recommendation — stale</div>
+      <div class="px-4 py-3 text-sm">
+        <div class="rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2 mb-3">
+          This recommendation is stale. {{ state.recommendation.stale_reason or 'Vendor data changed after it was saved.' }}
+        </div>
+        <div class="prose-sm text-sm text-slate-700">{{ (state.recommendation.recommendation_markdown or state.recommendation.answer) | md | safe }}</div>
       </div>
     </div>
     {% endif %}
@@ -89,9 +149,10 @@
     <div class="rounded-lg border border-slate-200 bg-white">
       <div class="px-4 py-3 border-b border-slate-200 font-medium">Exports</div>
       <ul class="px-4 py-3 text-xs space-y-1.5">
-        <li><a href="/rfx/{{ state.id }}/export.xlsx" class="underline">Award workbook (.xlsx)</a>: Summary, Award by line, Comparison (colour-coded, conversion notes as comments), Flags, Vendors, Evidence index, Review log</li>
-        <li><a href="/rfx/{{ state.id }}/memo.md" class="underline">Award memo (.md)</a>: one-page narrative with caveats</li>
-        <li><a href="/rfx/{{ state.id }}/export.csv" class="underline">Comparison (.csv)</a>: long format, one row per line × vendor</li>
+        <li><a href="/rfx/{{ state.id }}/export.xlsx" class="underline">Award workbook (.xlsx)</a>: Summary, Award by line, Comparison, Flags, Vendors, Evidence, Review log, Snapshot metadata</li>
+        <li><a href="/rfx/{{ state.id }}/memo.md" class="underline">Award memo (.md)</a>: narrative with the same snapshot id and totals as this page</li>
+        <li><a href="/rfx/{{ state.id }}/export.csv" class="underline">Comparison (.csv)</a>: long format with version header</li>
+        <li class="text-slate-500">If vendors are still processing, append <code>?provisional=1</code> for a labelled provisional export.</li>
       </ul>
     </div>
   </aside>

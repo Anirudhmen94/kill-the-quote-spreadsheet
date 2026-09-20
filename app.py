@@ -11,7 +11,7 @@ load_dotenv()
 from fastapi import FastAPI, Form, HTTPException, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, RedirectResponse, Response  # noqa: E402
 
-from core import ingest, llm, rfx_drafter, storage, vendor_sim  # noqa: E402
+from core import ingest, llm, rfx_drafter, snapshots, storage, vendor_sim  # noqa: E402
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render  # noqa: E402
 from routes import ask, compare, inbox  # noqa: E402
 
@@ -97,6 +97,7 @@ def update_line(
             li["annual_qty"] = max(1, annual_qty)
             li["gsm"] = max(100, gsm)
             li["nominal_weight_g"] = rfx_drafter.nominal_weight_g(li["length_mm"], li["width_mm"], li["height_mm"], li["gsm"])
+            snapshots.bump_vendor_data_version(state, "manual_edit", affected_vendor_ids=[])
             storage.save_state(rfx_id, state)
             return render(request, "partials/line_row.html", state=state, li=li, saved=True)
     raise HTTPException(404)

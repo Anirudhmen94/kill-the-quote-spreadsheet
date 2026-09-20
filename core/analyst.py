@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import engine, llm
+from . import engine, llm, snapshots
 
 SYSTEM = """You are the sourcing analyst for a category buyer comparing five suppliers' quotes for corrugated packaging.
 You answer questions about the comparison strictly by calling the tools provided. Rules:
@@ -209,12 +209,64 @@ def tables_from_trace(trace: list[dict]) -> tuple[list[dict], list[dict], list[s
 
 
 def ask(state: dict, question: str, history: list[dict], log: list | None = None) -> dict:
+    """Answer a buyer question against a fresh calculation snapshot of the current vendor-data version."""
+    snapshots.ensure_snapshot_fields(state)
     cmp = engine.build_comparison(state)
+    # Capture a comparison snapshot + analyst snapshot before calling the model
+    snap = snapshots.create_calculation_snapshot(
+        state,
+        "analyst_answer",
+        parameters={"question": question},
+        result={},
+    )
+    context_version = snap["vendor_data_version"]
+    context = snapshots.context_for_analyst(state, cmp, snap)
+
     messages = []
     for h in history[-6:]:
+        # Prefer not to poison the model with stale narratives: only pass prior Q text, not old answers that may claim vendors are missing
         messages.append({"role": "user", "content": h["question"]})
-        messages.append({"role": "assistant", "content": h["answer"] or "(no answer)"})
-    messages.append({"role": "user", "content": _context_summary(cmp) + "\n\nBuyer's question: " + question})
-    text, trace = llm.agent_loop(purpose="analyst", system=SYSTEM, messages=messages, tools=TOOLS, execute=make_executor(cmp), max_rounds=8, log=log)
+        prior = h.get("answer") or "(no answer)"
+        if h.get("status") == "stale" or h.get("legacy"):
+            prior = "(prior answer omitted — it was based on an older vendor-data version)"
+        messages.append({"role": "assistant", "content": prior})
+    messages.append({"role": "user", "content": context + "\n\nBuyer's question: " + question})
+
+    text, trace = llm.agent_loop(
+        purpose="analyst",
+        system=SYSTEM,
+        messages=messages,
+        tools=TOOLS,
+        execute=make_executor(cmp),
+        max_rounds=8,
+        log=log,
+    )
+
+    # Race-condition guard: if vendor data moved while we were answering, discard
+    snapshots.assert_context_current(state, snap, context_version)
+
     tables, charts, caveats = tables_from_trace(trace)
-    return {"question": question, "answer": text, "trace": trace, "tables": tables, "charts": charts, "caveats": caveats}
+
+    # Attach key totals from any award/cheapest tool results into the snapshot for later export agreement
+    award_result = {}
+    for t in trace:
+        if t.get("ok") and t.get("tool") in ("cheapest_per_line", "award_scenario") and isinstance(t.get("output"), dict):
+            out = t["output"]
+            award_result = {
+                "total_extended_inr": out.get("total_extended_inr") or out.get("total_after_conditional_discounts_inr"),
+                "covered_line_count": (cmp["line_count"] - len(out.get("uncovered_lines") or [])) if "uncovered_lines" in out else None,
+                "uncovered_lines": out.get("uncovered_lines"),
+                "share_by_vendor": out.get("share_by_vendor"),
+                "strategy": out.get("strategy") or t.get("tool"),
+            }
+    snap["result"] = award_result or {"question": question}
+
+    result = {
+        "question": question,
+        "answer": text,
+        "trace": trace,
+        "tables": tables,
+        "charts": charts,
+        "caveats": caveats,
+    }
+    return snapshots.attach_answer_metadata(state, result, snap)

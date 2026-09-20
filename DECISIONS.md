@@ -27,3 +27,12 @@ Real email (stubbed to an Outbox), vendor portal/logins, ERP hand-off, payments,
 ## Where the interesting problem actually is
 
 Extraction is now a commodity; a good model reads the angled photo. The hard part is **row matching under ambiguity and the buyer's decision under partial data**. Two RFx lines share a size and differ only in print; a vendor row omits the print. Was it a quote for line 1, line 2, or both? The system's honest answer is "candidates: 1, 2; needs review", and the product question is how much of that ambiguity a buyer will tolerate before they reopen Excel. My answer here: show the ambiguity, make resolving it one click with an audit trail, and draft the clarification email for them. The next thing I would build is not a better parser; it is a vendor-side "confirm these 4 mappings" link that closes the loop without anyone retyping anything.
+
+
+## Snapshot consistency (added for the take-home fix)
+
+The prototype had a data-consistency defect: an analyst answer saved before all vendors finished processing stayed labelled as the award recommendation even after later vendors landed and the live Award totals changed.
+
+**Decision:** introduce an explicit vendor-data version + calculation snapshot layer (see `core/snapshots.py`) rather than hiding old answers or recomputing them in place. Historical answers remain for audit, clearly labelled stale, with a one-click rerun. Saves of stale answers are blocked. Exports are stamped with the same snapshot id shown on the Award page.
+
+**Deliberately left out of this fix:** multi-user locking beyond optimistic version checks, a full event-sourced store, and hard-coded demo totals.
