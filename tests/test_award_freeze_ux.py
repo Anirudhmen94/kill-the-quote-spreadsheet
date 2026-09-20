@@ -134,3 +134,89 @@ def test_freeze_blocked_human_copy():
     assert human
     assert "rationale" in human.lower()
     assert life["freeze_blocked_reason"].startswith("Save the current")
+
+
+def test_complete_freeze_post_redirects_with_error_flash_when_blocked():
+    """Plain form POST must not blank-page or silently no-op when complete freeze fails."""
+    st = _seed()
+    rid = st["id"]
+    check = freeze.validate_freeze_request(storage.load_state(rid), mode="complete")
+    assert check["ok"] is False
+    assert scenario.recommendation_lifecycle(storage.load_state(rid)).get("can_freeze") is True
+
+    r = client.post(
+        f"/rfx/{rid}/award/freeze",
+        data={"freeze_mode": "complete"},
+        follow_redirects=False,
+    )
+    assert r.status_code in (303, 302), r.text[:500]
+    loc = r.headers.get("location") or ""
+    assert "/award" in loc
+    assert not (r.headers.get("HX-Redirect") or r.headers.get("hx-redirect"))
+
+    st2 = storage.load_state(rid)
+    assert not (st2.get("freeze") and st2["freeze"].get("status") == "frozen")
+    flash = st2.get("flash") or {}
+    assert flash.get("level") == "error"
+    assert "uncovered" in (flash.get("message") or "").lower() or "allocation" in (
+        flash.get("message") or ""
+    ).lower()
+    assert "partial" in (flash.get("message") or "").lower()
+
+    page = client.get(f"/rfx/{rid}/award")
+    assert page.status_code == 200
+    assert 'data-testid="award-flash"' in page.text
+    assert "Error." in page.text
+    assert "Not frozen yet" in page.text or "not frozen" in page.text.lower()
+
+
+def test_partial_freeze_post_persists_and_redirects_for_plain_form():
+    st = _seed()
+    rid = st["id"]
+    r = client.post(
+        f"/rfx/{rid}/award/freeze",
+        data={
+            "freeze_mode": "partial",
+            "partial_reason": "Line 30 uncovered; acknowledging coverage gap for demo.",
+            "acknowledgement": ["coverage_gaps", "selected_blockers"],
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code in (303, 302), (r.status_code, r.headers, r.text[:300])
+    assert "/award" in (r.headers.get("location") or "")
+    # Must not be empty HX-only success for a normal browser form
+    assert r.text == "" or "HX-Redirect" not in r.headers or r.headers.get("location")
+
+    st2 = storage.load_state(rid)
+    pack = st2.get("freeze") or {}
+    assert pack.get("status") == "frozen"
+    assert pack.get("freeze_mode") == "partial"
+    flash = st2.get("flash") or {}
+    assert flash.get("level") == "success"
+    assert "frozen" in (flash.get("message") or "").lower()
+
+    page = client.get(f"/rfx/{rid}/award")
+    assert page.status_code == 200
+    assert "Frozen" in page.text
+    assert 'data-testid="award-flash"' in page.text
+
+
+def test_award_page_distinguishes_ready_attempt_vs_complete_clear():
+    st = _seed()
+    r = client.get(f"/rfx/{st['id']}/award")
+    assert r.status_code == 200
+    html = r.text
+    # Golden seed: can_freeze true but complete blocked by uncovered line 30
+    assert 'data-testid="freeze-ready-attempt"' in html
+    assert "Checklist clear for complete freeze" not in html
+    assert 'data-testid="freeze-complete-blocked"' in html
+    assert "uncovered" in html.lower() or "30" in html
+    checklist = scenario.freeze_ux_checklist(
+        storage.load_state(st["id"]),
+        live=snapshots.live_award_calculation(storage.load_state(st["id"])),
+        life=scenario.recommendation_lifecycle(storage.load_state(st["id"])),
+        has_blocking_exceptions=True,
+    )
+    assert checklist["ready_to_attempt"] is True
+    assert checklist["complete_ok"] is False
+    assert checklist["all_ready_for_freeze"] is False

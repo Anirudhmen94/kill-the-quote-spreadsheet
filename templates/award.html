@@ -13,9 +13,11 @@
 {% if flash and flash.message %}
 <div class="mt-4 rounded-lg border px-3 py-2 text-sm
   {% if flash.level == 'error' %}border-rose-300 bg-rose-50 text-rose-950
-  {% else %}border-emerald-300 bg-emerald-50 text-emerald-950{% endif %}">
+  {% else %}border-emerald-300 bg-emerald-50 text-emerald-950{% endif %}" data-testid="award-flash">
   <strong>{% if flash.level == 'error' %}Error.{% else %}Done.{% endif %}</strong> {{ flash.message }}
+  {% if flash.level != 'error' %}
   <a href="/rfx/{{ state.id }}/email#outbox" class="underline ml-2">View Outbox</a>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -277,16 +279,25 @@
               </div>
             </li>
           </ul>
-          {% if freeze_checklist.recommendation_ok and freeze_checklist.calculation_ok %}
-          <p class="text-xs text-emerald-800">Checklist clear for freeze — you can lock this award below.</p>
+          {% if freeze_checklist.complete_ok %}
+          <p class="text-xs text-emerald-800" data-testid="freeze-complete-clear">Checklist clear for complete freeze — you can lock this award below.</p>
+          {% elif freeze_checklist.ready_to_attempt %}
+          <p class="text-xs text-amber-900" data-testid="freeze-ready-attempt">
+            Recommendation saved — ready to attempt freeze. Complete freeze is still blocked
+            (coverage, assumed cells, or blockers). Use Advanced… for a partial freeze, or resolve issues on Compare.
+          </p>
           {% endif %}
         </div>
         {% endif %}
 
         {% if freeze_check_complete and not freeze_check_complete.ok %}
-        <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
+        <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5" data-testid="freeze-complete-blocked">
           Complete freeze blocked:
           <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+          <p class="mt-1 text-[11px] text-rose-900">
+            Options: Advanced… → Freeze partial… (acknowledgements + reason), confirm assumed cells if shown,
+            or resolve coverage/anomalies on Compare.
+          </p>
         </div>
         {% endif %}
 

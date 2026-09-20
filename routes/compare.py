@@ -223,6 +223,7 @@ def award_page(request: Request, rfx_id: str):
         live=live if live.get("available") else None,
         life=life,
         has_blocking_exceptions=blocking,
+        freeze_check_complete=freeze_check_complete,
     )
     draft_summary = ""
     if live.get("available") and freeze_checklist.get("needs_save"):
@@ -344,6 +345,40 @@ async def save_award_recommendation_route(
     return RedirectResponse(f"/rfx/{rfx_id}/award#award-step-3", status_code=303)
 
 
+def _freeze_error_flash(message: str) -> str:
+    """Append actionable next steps when complete/partial freeze is rejected."""
+    msg = (message or "").strip()
+    lower = msg.lower()
+    if "assumed" in lower:
+        hint = (
+            " Next: under Advanced… tick “Confirm assumed cells into freeze”, "
+            "or use Freeze partial… with acknowledgements and a written reason."
+        )
+    elif "uncovered" in lower or "full allocation" in lower or "coverage" in lower:
+        hint = (
+            " Next: resolve coverage on Compare, or use Advanced… → Freeze partial… "
+            "(acknowledge coverage gaps + selected blockers, and write a reason)."
+        )
+    elif "blocker" in lower:
+        hint = (
+            " Next: resolve selected-award blockers on Compare, or use Advanced… → "
+            "Freeze partial… with acknowledgements and a written reason."
+        )
+    elif "acknowledgement" in lower or "partial freeze requires" in lower:
+        hint = (
+            " Next: open Advanced…, tick the required acknowledgements, "
+            "and enter a partial reason before Freeze partial…"
+        )
+    elif "recommendation" in lower:
+        hint = " Next: write a short rationale and save this calculation as your recommendation."
+    else:
+        hint = (
+            " Next: use Advanced… for a partial freeze (acknowledgements + reason), "
+            "confirm assumed cells if needed, or resolve issues on Compare."
+        )
+    return msg + hint
+
+
 @router.post("/rfx/{rfx_id}/award/freeze", response_class=HTMLResponse)
 async def freeze_award_route(
     request: Request,
@@ -353,23 +388,46 @@ async def freeze_award_route(
     partial_reason: str = Form(""),
 ):
     state = load_or_404(rfx_id)
+    award_url = f"/rfx/{rfx_id}/award#award-step-3"
+
+    def _after_post(*, hx_ok: bool = True):
+        """Normal form POSTs need HTTP 303; HTMX clients use HX-Redirect."""
+        if request.headers.get("HX-Request") and hx_ok:
+            return hx_redirect(f"/rfx/{rfx_id}/award")
+        return RedirectResponse(award_url, status_code=303)
+
     if not any(v.get("extraction") for v in state["vendors"]):
-        return error_fragment("Extract vendor responses before freezing an award.", 400)
+        award_actions.push_flash(
+            state,
+            "Extract vendor responses before freezing an award.",
+            level="error",
+        )
+        storage.save_state(rfx_id, state)
+        return _after_post()
     form = await request.form()
     acks = form.getlist("acknowledgement") if hasattr(form, "getlist") else []
+    mode = freeze_mode or "complete"
     try:
-        freeze.freeze_award(
+        pack = freeze.freeze_award(
             state,
             confirm_assumed=confirm_assumed,
             require_quality_gate=True,
-            mode=freeze_mode or "complete",
+            mode=mode,
             acknowledgements=list(acks),
             partial_reason=partial_reason or "",
         )
     except ValueError as e:
-        return error_fragment(str(e), 400)
+        award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
+        storage.save_state(rfx_id, state)
+        return _after_post()
+    mode_label = pack.get("freeze_mode") or mode
+    award_actions.push_flash(
+        state,
+        f"Award frozen ({mode_label}). Snapshot {pack.get('calculation_snapshot_id')}.",
+        level="success",
+    )
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/award")
+    return _after_post()
 
 
 @router.post("/rfx/{rfx_id}/award/confirm-discount", response_class=HTMLResponse)

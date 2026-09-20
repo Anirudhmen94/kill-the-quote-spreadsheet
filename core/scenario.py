@@ -1015,8 +1015,13 @@ def freeze_ux_checklist(
     live: dict | None = None,
     life: dict | None = None,
     has_blocking_exceptions: bool = False,
+    freeze_check_complete: dict | None = None,
 ) -> dict:
-    """Visible Step-3 checklist for Award freeze readiness (UX only)."""
+    """Visible Step-3 checklist for Award freeze readiness (UX only).
+
+    Distinguishes "ready to attempt freeze" (rec saved + calc available)
+    from "complete freeze clear" (validate_freeze_request complete mode ok).
+    """
     from . import freeze as freeze_mod
 
     life = life or recommendation_lifecycle(state)
@@ -1032,6 +1037,12 @@ def freeze_ux_checklist(
         "stale",
     )
     human = freeze_blocked_human(life)
+    ready_to_attempt = bool(rec_ok and calc_ok)
+    check = freeze_check_complete
+    if check is None and ready_to_attempt and not frozen:
+        check = freeze_mod.validate_freeze_request(state, mode="complete")
+    complete_ok = bool(check and check.get("ok"))
+    complete_errors = list((check or {}).get("errors") or [])
     return {
         "show": not frozen,
         "frozen": frozen,
@@ -1039,7 +1050,11 @@ def freeze_ux_checklist(
         "recommendation_ok": rec_ok,
         "calculation_ok": calc_ok,
         "needs_save": needs_save,
-        "all_ready_for_freeze": bool(rec_ok and calc_ok),
+        "ready_to_attempt": ready_to_attempt,
+        "complete_ok": complete_ok,
+        "complete_errors": complete_errors,
+        # Back-compat: was previously rec+calc only; now means complete freeze is clear.
+        "all_ready_for_freeze": bool(ready_to_attempt and complete_ok),
         "human_blocked_reason": human,
         "engine_blocked_reason": life.get("freeze_blocked_reason"),
         "lifecycle": life.get("lifecycle"),
