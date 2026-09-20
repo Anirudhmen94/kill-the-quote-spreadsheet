@@ -1,3 +1,5 @@
+For the recorded **analyst conversation**, use [ANALYST_WALKTHROUGH.md](./ANALYST_WALKTHROUGH.md) (6–8 min script). Full end-to-end demo below.
+
 # Demo script and questions worth asking
 
 Total running time about 12 minutes, plus model latency. Have one sourcing event already extracted as a fallback in case a live extraction is slow.

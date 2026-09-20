@@ -1,46 +1,42 @@
-# Kill the Quote Spreadsheet — decisions (one page)
+# Kill the Quote Spreadsheet — one-page decisions
 
-**Live prototype:** [kill-the-quote-spreadsheet-lac.vercel.app](https://kill-the-quote-spreadsheet-lac.vercel.app) · **This note in-app:** [/demo/decisions](https://kill-the-quote-spreadsheet-lac.vercel.app/demo/decisions)  
-**Persona:** category buyer, corrugated packaging. **Rule followed:** stub plumbing (SMTP); don’t fake extraction, reasoning, or Ask answers.
-
-Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
-
----
-
-## Decisions → where to see them
-
-| Decision | Why | See it here |
-|---|---|---|
-| **Messy edges over happy path** | Assignment cares about uncertainty, not a clean Excel. | [Email](https://kill-the-quote-spreadsheet-lac.vercel.app/) → Simulate 5 replies (Excel / PDF / Word / photo / email) → Read all |
-| **Live AI for draft, extract, free-ask** | Brief: don’t hardcode demo answers. | Home draft · Email **Read all** · Award **Ask** free-form textarea |
-| **Maths in code, prose from the model** | Trust: ₹4cr decisions can’t rest on recalled numbers. | Compare matrix footers · Award shortlist · Ask answers (tables = engine) |
-| **Quality gates at draft time** | Questionnaire comes from gates + brief; gates drive eligibility. | Home: pick gates → draft · Compare gate badges · Award “Pass vendors” |
-| **Default award = line split** | Assignment VP question: cheapest per line among who cleared quality. | Award **Assign by line** (cheapest eligible Pass / shortlist default) |
-| **Compare vs Anomalies split** | Full multi-vendor matrix stays separate from exception workflows. | `/rfx/<id>/compare` (all vendors, all cell statuses) · `/rfx/<id>/anomalies` (flags + Override / Send for approval / Deny) |
-| **Award = Ask → top 2 → assign → acknowledgements → Send** | One simple buyer close path; Ask stays strong after Compare. | `/rfx/<id>/award`: Ask → Suggest top 2 → Assign by line → Acknowledgements → **Send award drafts** → confirmation → Export Excel |
-| **Premade Ask = fast cache; free-ask = live Claude** | Demo speed ≠ Email Read-all latency; typed questions stay real. | Award Ask: 3 premade buttons (instant) · textarea (live API) |
-| **Ask → Send award to vendor preloads Award** | Buyer goes from analyst suggestion straight into Award send path. | Compare/Award Ask: **Send award to vendor** → Award with vendor + reason banner · **Apply this vendor** remains lighter |
-| **Award draft + notices, not freeze/lock UX** | Freeze/lock lifecycle was over-engineered for the buyer. Core freeze code may remain for tests/back-compat; Award page does not expose it. | Award Send → Outbox award + regret stubs · **manager/stakeholder notified** · status **Award drafts sent** |
-| **Email channel, stub SMTP** | Brief allows fake mail; Outbox is the proof. | `/rfx/<id>/email` Incoming + Outbox · award/regret stubs after Send |
-| **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare cell-status / gate / vendor filters · Anomalies kind filters (Award: none) |
-| **Compare export ≠ Award export** | Buyers download the matrix from Compare; award packs stay on Award. | Compare **Export workbook** → `/comparison.xlsx` (lines × vendors prices) · Award **Export Excel** → `/export.xlsx` (Award by line + Non-awarded) |
+**Live demo:** https://kill-the-quote-spreadsheet-lac.vercel.app  
+**Persona:** category buyer · corrugated packaging · ~30 lines · 5 messy vendor replies  
+**Rule we followed:** stub SMTP; do **not** fake extraction, reasoning, or Ask answers.
 
 ---
 
-## What we added (product surface)
+## What we decided (and why)
 
-1. **Draft** — brief + quality-check prefs → live RFx + auto questionnaire.  
-2. **Email** — simulate messy replies, live parallel extract, clarifications, Outbox.  
-3. **Compare** — full multi-vendor INR/pc matrix (all statuses + gate badges), evidence drawer (read/link to Anomalies), Ask drawer, filters.  
-3b. **Anomalies** — flagged cells, gate Fail/Partial, coverage gaps, format/pricing callouts; Override / Send for approval / Deny.  
-4. **Award** — Ask the analyst (premade + live) with **Send award to vendor** (preload + reason) and lighter **Apply this vendor**; Suggest top 2 Pass vendors; Assign by line; Acknowledgements (buyer confirmation questions); **Send award drafts** (+ regrets + manager notify); confirmation dialog; Export Excel.  
-5. **Trust chrome** — cell states, vendor data version / snapshots, audit strip.  
-6. **Charts / exports / audit** — Compare allocation & coverage bars; Compare export = multi-vendor price matrix; Award export = line→vendor + non-awarded/regret.
+| Decision | Why it matters for the brief |
+|---|---|
+| **Messy replies in, normalized matrix out** | The week to delete is retyping Excel/PDF/Word/photo/email into one sheet. We simulate all five shapes and extract live into INR/pc. |
+| **Maths in code; prose from the model** | A ₹4cr buyer won’t trust recalled numbers. Comparison totals, cheapest-per-line, and Ask tables come from deterministic engines; Claude explains them. |
+| **Quality gates at draft → questionnaire → eligibility** | Matches the VP question: cheapest per line **only among who cleared quality**. Gates chosen on draft drive the questionnaire and Pass/Partial/Fail on Compare/Award. |
+| **Compare = full matrix; Anomalies = exceptions** | Buyers need every vendor’s price in one view *and* a place to act on flags (Override / Send for approval / Deny) without cluttering the matrix. |
+| **Award = Ask → top 2 → assign → acknowledgements → Send** | Close path is sendable drafts + regrets + manager notify — not a freeze/lock bureaucracy. Line-split default answers the brief’s split question. |
+| **Ask: premade cache + live free-ask; “Send award to vendor”** | Demo can move fast on canned questions; typed questions hit Claude live. Analyst suggestion preloads Award with vendor + reason so the buyer can approve and send. |
+| **Compare export ≠ Award export** | Compare workbook = line × vendor **price matrix**. Award workbook = who wins which lines + non-awarded. |
+| **Email channel, stub Outbox** | Brief allows fake mail; Outbox holds RFx, clarifications, award drafts, regrets, manager notice. |
+
+---
 
 ## What we deliberately left out
 
-Real SMTP / vendor portals · inventing “same as last year” prices · auto-zeroing missing freight or footnote discounts · multi-buyer auth / ERP · private blob ACLs · guaranteeing sub-4s five-file live extract · winner-takes-all as default · freeze/lock as the Award buyer path · interview lifecycle/demo strips in the main buyer UI · burying Ask only as a Compare popup.
+Real SMTP / vendor portals · inventing “same as last year” prices · auto-applying footnote discounts or missing freight · multi-user auth / ERP · winner-takes-all as default · freeze/lock as the primary Award UX · guaranteeing sub-4s for five live extracts · burying Ask only as a popup.
 
-## Where the interesting problem is
+---
 
-Extraction is getting commodity. The hard product is **awarding under partial, ambiguous data** and making the next action obvious (evidence, anomaly action, Ask, assign, Send). Next I’d build a vendor “confirm these mappings” loop — not a fancier parser.
+## Where the interesting problem actually is
+
+Extraction is getting commodity. The hard product is **awarding under partial, ambiguous data** and making the next action obvious (evidence → anomaly action → Ask → assign → Send). Next I’d build a vendor “confirm these mappings” loop — not a fancier parser.
+
+---
+
+## Map to the live product
+
+1. **Draft** — brief + quality checks → live RFx + auto questionnaire  
+2. **Email** — Simulate 5 replies → Read all (live extract) → Outbox  
+3. **Compare** — multi-vendor matrix, charts, Ask drawer, **Export workbook** (matrix only)  
+4. **Anomalies** — flagged cells / gaps · Override / Approve / Deny  
+5. **Award** — Ask · Suggest top 2 · Assign by line · Acknowledgements · Send drafts (+ regrets + manager) · Export Excel  

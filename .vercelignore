@@ -1,0 +1,10 @@
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+.git
+.pytest_cache
+tests
+*.xlsx
+*.xls
+node_modules
