@@ -20,12 +20,24 @@ from typing import Any
 
 import httpx
 
-BLOB_API = "https://blob.vercel-storage.com"
+BLOB_API = os.environ.get("VERCEL_BLOB_API_URL", "https://vercel.com/api/blob")
+BLOB_API_VERSION = "12"
 LOCAL_ROOT = Path(os.environ.get("LOCAL_STORE_DIR", "data/store"))
 
 
 def _token() -> str | None:
     return os.environ.get("BLOB_READ_WRITE_TOKEN") or None
+
+
+def _headers(extra: dict | None = None) -> dict:
+    """Auth headers the Blob API expects (mirrors @vercel/blob v12: bearer token + store id parsed from it)."""
+    token = _token() or ""
+    parts = token.split("_")
+    store_id = parts[3] if len(parts) > 3 else ""
+    h = {"authorization": f"Bearer {token}", "x-api-version": BLOB_API_VERSION, "x-vercel-blob-store-id": store_id}
+    if extra:
+        h.update(extra)
+    return h
 
 
 def backend_name() -> str:
@@ -53,16 +65,17 @@ def put_bytes(path: str, data: bytes, content_type: str = "application/octet-str
         target.write_bytes(data)
         return f"/files/{path}"
 
-    headers = {
-        "authorization": f"Bearer {token}",
-        "x-api-version": "7",
-        "x-content-type": content_type,
-        "x-add-random-suffix": "0",
-        "x-allow-overwrite": "1",
-        "x-cache-control-max-age": "60",
-    }
-    with httpx.Client(timeout=60) as client:
-        r = client.put(f"{BLOB_API}/{path}", content=data, headers=headers)
+    headers = _headers(
+        {
+            "x-vercel-blob-access": "public",
+            "x-content-type": content_type,
+            "x-add-random-suffix": "0",
+            "x-allow-overwrite": "1",
+            "x-cache-control-max-age": "60",
+        }
+    )
+    with httpx.Client(timeout=120) as client:
+        r = client.put(f"{BLOB_API}/", params={"pathname": path}, content=data, headers=headers)
         r.raise_for_status()
         return r.json()["url"]
 
@@ -99,11 +112,7 @@ def list_paths(prefix: str) -> list[dict[str, Any]]:
             params = {"prefix": prefix, "limit": "1000"}
             if cursor:
                 params["cursor"] = cursor
-            r = client.get(
-                f"{BLOB_API}/",
-                params=params,
-                headers={"authorization": f"Bearer {token}", "x-api-version": "7"},
-            )
+            r = client.get(f"{BLOB_API}/", params=params, headers=_headers())
             r.raise_for_status()
             body = r.json()
             for b in body.get("blobs", []):
@@ -127,11 +136,7 @@ def delete_urls(urls: list[str]) -> None:
                     p.unlink()
         return
     with httpx.Client(timeout=60) as client:
-        client.post(
-            f"{BLOB_API}/delete",
-            json={"urls": urls},
-            headers={"authorization": f"Bearer {token}", "x-api-version": "7"},
-        )
+        client.post(f"{BLOB_API}/delete", json={"urls": urls}, headers=_headers())
 
 
 # ---------------------------------------------------------------------------
