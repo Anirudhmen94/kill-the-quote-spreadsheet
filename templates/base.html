@@ -4,6 +4,57 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Kill the Quote Spreadsheet{% endblock %}</title>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            /* RFX Desk design set — warm parchment neutrals + clay accent */
+            slate: {
+              50:  '#FCFBF7',
+              100: '#F4F0E6',
+              200: '#E7E1D2',
+              300: '#DED7C8',
+              400: '#C4BBA8',
+              500: '#9C9384',
+              600: '#6E6556',
+              700: '#5E584E',
+              800: '#4A453C',
+              900: '#1B1915',
+              950: '#141210'
+            },
+            emerald: {
+              50:  '#E3EFE7',
+              100: '#E3EFE7',
+              200: '#C5DFCB',
+              500: '#3E7F5C',
+              600: '#1F5136',
+              700: '#1F5136',
+              800: '#1F5136',
+              900: '#163826'
+            },
+            rose: {
+              50:  '#F8E3DF',
+              100: '#F8E3DF',
+              200: '#F0C7BE',
+              500: '#C0451E',
+              600: '#8F3315',
+              700: '#8F3315',
+              800: '#7A2C20',
+              900: '#5c2b2e'
+            },
+            amber: {
+              50:  '#F7ECD8',
+              100: '#F7ECD8',
+              200: '#F0EADC',
+              800: '#7A4E05',
+              900: '#7A4E05'
+            }
+          }
+        }
+      }
+    };
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
