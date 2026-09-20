@@ -27,9 +27,11 @@ T = TypeVar("T", bound=BaseModel)
 
 DEFAULT_MODEL = "claude-sonnet-5"
 FALLBACK_MODEL = "claude-sonnet-4-5"
-# Fast draft path only — extract/analyst keep DEFAULT_MODEL / ANTHROPIC_MODEL.
+# Fast models: draft + extract/transcribe default to Haiku. Analyst keeps ANTHROPIC_MODEL / Sonnet.
 DEFAULT_DRAFT_MODEL = "claude-haiku-4-5"
 DRAFT_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_EXTRACT_MODEL = "claude-haiku-4-5"
+EXTRACT_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
 class AINotConfigured(RuntimeError):
@@ -46,6 +48,11 @@ def model_name() -> str:
 
 def draft_model_name() -> str:
     return os.environ.get("ANTHROPIC_DRAFT_MODEL") or DEFAULT_DRAFT_MODEL
+
+
+def extract_model_name() -> str:
+    """Model for vendor extract + image transcription (live API). Override with ANTHROPIC_EXTRACT_MODEL."""
+    return os.environ.get("ANTHROPIC_EXTRACT_MODEL") or DEFAULT_EXTRACT_MODEL
 
 
 def _client():
@@ -116,8 +123,16 @@ def structured(
     client = _client()
     model = model or model_name()
     fallbacks = [FALLBACK_MODEL]
-    if model in (DEFAULT_DRAFT_MODEL, DRAFT_FALLBACK_MODEL) or model == draft_model_name():
-        fallbacks = [DRAFT_FALLBACK_MODEL, FALLBACK_MODEL]
+    haikuish = {
+        DEFAULT_DRAFT_MODEL,
+        DRAFT_FALLBACK_MODEL,
+        DEFAULT_EXTRACT_MODEL,
+        EXTRACT_FALLBACK_MODEL,
+        draft_model_name(),
+        extract_model_name(),
+    }
+    if model in haikuish or "haiku" in (model or "").lower():
+        fallbacks = [EXTRACT_FALLBACK_MODEL, DRAFT_FALLBACK_MODEL, FALLBACK_MODEL]
     tool = {
         "name": "emit",
         "description": f"Emit the final structured result. {schema.__doc__ or ''}".strip(),

@@ -56,10 +56,12 @@ Environment variables:
 | Variable | Required | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | yes | All model calls. Without it the UI shows a red banner and refuses to draft, extract or answer. It never fabricates output. |
-| `ANTHROPIC_MODEL` | no | Defaults to `claude-sonnet-5`; falls back to `claude-sonnet-4-5` if the pinned model is unavailable. |
+| `ANTHROPIC_MODEL` | no | Defaults to `claude-sonnet-5` (Ask / analyst). Falls back to `claude-sonnet-4-5` if unavailable. |
+| `ANTHROPIC_DRAFT_MODEL` | no | Defaults to `claude-haiku-4-5` for RFx drafting. Example brief uses a cached fixture (no LLM). |
+| `ANTHROPIC_EXTRACT_MODEL` | no | Defaults to `claude-haiku-4-5` for live vendor extract + image transcription. |
 | `BLOB_READ_WRITE_TOKEN` | on Vercel | Vercel Blob store for files and state. Set automatically when a Blob store is connected to the project. |
 
-Typical timings with Claude Sonnet: drafting the RFx 40-60 s; reading a vendor reply 40-130 s (the Word doc and the photo are slowest); an analyst answer 10-40 s.
+Typical timings: example-brief draft is instant (cache); custom draft uses Haiku. Live Read-all of 5 vendors runs in parallel on the extract Haiku model — wall clock is dominated by the slowest vendor (often the photo or long Word doc), typically tens of seconds, not a few seconds. Analyst answers still use Sonnet (10-40 s).
 
 ## Deploy on Vercel
 

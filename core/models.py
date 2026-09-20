@@ -194,6 +194,18 @@ class ImageTranscriptionAI(BaseModel):
     caveats: str = Field(default="", description="Glare, skew, cropped rows, ambiguous digits")
 
 
+class PhotoQuoteAI(BaseModel):
+    """One-shot live read of a photographed rate card: transcription + structured extraction.
+
+    Used so image vendors cost a single vision call instead of transcribe-then-extract.
+    """
+
+    transcription: str = Field(description="Line-by-line transcription. Use ' | ' between table columns. Mark '?' / '[cut off]' where needed. Include footnotes.")
+    legibility: float = Field(ge=0, le=1)
+    caveats: str = Field(default="")
+    extraction: ExtractionAI = Field(description="Structured extraction. Evidence snippets must be verbatim from the transcription.")
+
+
 # ---------------------------------------------------------------------------
 # Clarification email
 # ---------------------------------------------------------------------------

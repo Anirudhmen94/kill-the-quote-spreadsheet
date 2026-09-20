@@ -4,7 +4,7 @@
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="text-2xl font-semibold tracking-tight">Vendor responses</h1>
-    <p class="mt-1 text-sm text-slate-600">Replies arrive however vendors like. Read each one, then compare. <a href="/rfx/{{ state.id }}/outbox" class="underline">Outbox ({{ state.outbox|length }})</a></p>
+    <p class="mt-1 text-sm text-slate-600">Replies arrive however vendors like. Read all runs <strong>live AI extraction in parallel</strong> (fast extract model). <a href="/rfx/{{ state.id }}/outbox" class="underline">Outbox ({{ state.outbox|length }})</a></p>
   </div>
   <div class="flex flex-wrap items-center gap-2">
     {% set has_files = state.vendors|selectattr('files')|list|length > 0 %}

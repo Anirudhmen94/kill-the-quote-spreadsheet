@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 
 from . import ingest, llm
-from .models import ExtractionAI
+from .models import ExtractionAI, PhotoQuoteAI
 
 SYSTEM = """You are a meticulous procurement analyst reading a supplier's response to an RFx for corrugated packaging.
 Your job is to report exactly what the supplier's documents say and where they say it. You are not allowed to
@@ -105,6 +105,32 @@ def ingest_vendor_files(vendor: dict, get_bytes, log: list | None = None) -> Non
             vendor["texts"][f["file_id"]] = {"text": "", "method": "failed", "error": str(e)}
 
 
+# Certificate / attachment PDFs are short but still bloat the extract prompt when dumped
+# in full alongside a 30-line quote. Keep full text in vendor["texts"] for grounding;
+# only the model prompt is truncated.
+_ATTACH_PROMPT_CHARS = 900
+
+
+def _quote_files(vendor: dict) -> list[dict]:
+    return [f for f in vendor.get("files") or [] if f.get("role", "quote") == "quote"]
+
+
+def _is_image_only_quote(vendor: dict) -> bool:
+    """True when the commercial reply is a single photograph (e.g. Meghna rate card)."""
+    qf = _quote_files(vendor)
+    return len(qf) == 1 and qf[0].get("kind") == "image"
+
+
+def _file_text_for_prompt(f: dict, t: dict) -> str:
+    text = t.get("text") or "(no text could be read)"
+    if f.get("role") == "attachment" and len(text) > _ATTACH_PROMPT_CHARS:
+        return (
+            text[:_ATTACH_PROMPT_CHARS]
+            + "\n… [attachment truncated in prompt; full text retained for evidence grounding]"
+        )
+    return text
+
+
 def _content_blocks(vendor: dict, rfx: dict, get_bytes) -> list[dict]:
     blocks = [llm.text_block(_rfx_context(rfx))]
     file_list = ", ".join(f"{f['name']} ({f['kind']}, {f.get('role','quote')})" for f in vendor["files"])
@@ -117,12 +143,17 @@ def _content_blocks(vendor: dict, rfx: dict, get_bytes) -> list[dict]:
         if t.get("caveats"):
             header += f" | transcriber caveats: {t['caveats']}"
         header += " =====\n"
-        blocks.append(llm.text_block(header + (t.get("text") or "(no text could be read)")))
+        blocks.append(llm.text_block(header + _file_text_for_prompt(f, t)))
+        # Avoid double vision: if we already transcribed this image in ingest, do not
+        # re-attach the photograph on the extract call (text evidence is enough).
         if f["kind"] == "image":
+            method = t.get("method") or ""
+            if method.startswith("vision-transcription") and (t.get("text") or "").strip():
+                continue
             data = get_bytes(f["url"])
             if data:
                 media = ingest.guess_content_type(f["name"])
-                blocks.append(llm.text_block("The photograph itself, for verifying digits in the transcription above:"))
+                blocks.append(llm.text_block("The photograph itself (not yet transcribed as text):"))
                 blocks.append(llm.image_block(data, media if media.startswith("image/") else "image/jpeg"))
     blocks.append(llm.text_block("\nNow emit the structured extraction for this supplier. Every value needs verbatim evidence."))
     return blocks
@@ -252,8 +283,98 @@ def ground(extraction: dict, vendor: dict) -> dict:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def extract_vendor(state: dict, vendor: dict, get_bytes, log: list | None = None) -> dict:
+def _finalize_extraction(data: dict, vendor: dict, rfx: dict, model_label: str) -> dict:
+    data = ground(data, vendor)
+    data["model"] = model_label
+    data["extracted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    valid_lines = {li["line_no"] for li in rfx["line_items"]}
+    quoted = {q["line_no"] for q in data["line_quotes"] if q.get("line_no") in valid_lines}
+    covered = quoted | set(data.get("not_quoted_line_nos", []))
+    data["not_quoted_line_nos"] = sorted((set(data.get("not_quoted_line_nos", [])) | (valid_lines - covered)) - quoted)
+    return data
+
+
+def _extract_image_only_quote(state: dict, vendor: dict, get_bytes, log: list | None = None) -> dict:
+    """Single live vision call: transcribe + extract (no separate transcribe_image round-trip)."""
     rfx = state["rfx"]
+    img = _quote_files(vendor)[0]
+    data = get_bytes(img["url"])
+    if not data:
+        raise ValueError(f"Image file missing in storage: {img['name']}")
+    media = ingest.guess_content_type(img["name"])
+    if media not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+        media = "image/jpeg"
+
+    # Ingest any non-quote attachments (certs) without vision on the quote photo.
+    vendor.setdefault("texts", {})
+    for f in vendor["files"]:
+        if f["file_id"] == img["file_id"] or f["file_id"] in vendor["texts"]:
+            continue
+        raw = get_bytes(f["url"])
+        if raw is None:
+            vendor["texts"][f["file_id"]] = {"text": "", "method": "missing file", "error": "file not found in storage"}
+            continue
+        try:
+            vendor["texts"][f["file_id"]] = ingest.file_to_text(f["name"], raw, f.get("kind"), log=log)
+        except Exception as e:
+            vendor["texts"][f["file_id"]] = {"text": "", "method": "failed", "error": str(e)}
+
+    system = (
+        SYSTEM
+        + "\n\nThis supplier replied with a photograph of a printed rate card. "
+        "First transcribe it faithfully (line by line, preserve every digit), then extract. "
+        "Evidence snippets must be copied from YOUR transcription (which will be stored as the source text)."
+    )
+    file_list = ", ".join(f"{f['name']} ({f['kind']}, {f.get('role','quote')})" for f in vendor["files"])
+    content = [
+        llm.text_block(_rfx_context(rfx)),
+        llm.text_block(f"\nSUPPLIER: {vendor['name']} ({vendor['city']}). FILES RECEIVED: {file_list}\n"),
+        llm.text_block(f"\n===== PHOTO QUOTE: {img['name']} =====\nTranscribe then extract from this image."),
+        llm.image_block(data, media),
+    ]
+    for f in vendor["files"]:
+        if f["file_id"] == img["file_id"]:
+            continue
+        t = vendor["texts"].get(f["file_id"], {})
+        header = f"\n===== FILE: {f['name']} | kind: {f['kind']} | read via: {t.get('method','?')} =====\n"
+        content.append(llm.text_block(header + _file_text_for_prompt(f, t)))
+
+    model = llm.extract_model_name()
+    result = llm.structured(
+        purpose="extract_vendor_photo_combined",
+        system=system,
+        content=content,
+        schema=PhotoQuoteAI,
+        max_tokens=12000,
+        log=log,
+        model=model,
+    )
+    if log:
+        log[-1]["vendor"] = vendor["name"]
+
+    lines = [
+        f"[image line {i}] {ln.rstrip()}"
+        for i, ln in enumerate(result.transcription.splitlines(), start=1)
+        if ln.strip()
+    ]
+    vendor["texts"][img["file_id"]] = {
+        "text": "\n".join(lines),
+        "method": "vision-transcription (combined extract)",
+        "legibility": result.legibility,
+        "caveats": result.caveats,
+    }
+    data = result.extraction.model_dump(mode="json")
+    return _finalize_extraction(data, vendor, rfx, model)
+
+
+def extract_vendor(state: dict, vendor: dict, get_bytes, log: list | None = None) -> dict:
+    """Live Anthropic extraction. Image-only quotes use one combined vision call; others ingest then extract."""
+    rfx = state["rfx"]
+    model = llm.extract_model_name()
+
+    if _is_image_only_quote(vendor):
+        return _extract_image_only_quote(state, vendor, get_bytes, log=log)
+
     ingest_vendor_files(vendor, get_bytes, log=log)
     if not any((t.get("text") or "").strip() for t in vendor["texts"].values()):
         raise ValueError("None of the vendor's files contained readable text.")
@@ -262,18 +383,11 @@ def extract_vendor(state: dict, vendor: dict, get_bytes, log: list | None = None
         system=SYSTEM,
         content=_content_blocks(vendor, rfx, get_bytes),
         schema=ExtractionAI,
-        max_tokens=16000,
+        max_tokens=12000,
         log=log,
+        model=model,
     )
     if log:
         log[-1]["vendor"] = vendor["name"]
     data = result.model_dump(mode="json")
-    data = ground(data, vendor)
-    data["model"] = llm.model_name()
-    data["extracted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    valid_lines = {li["line_no"] for li in rfx["line_items"]}
-    quoted = {q["line_no"] for q in data["line_quotes"] if q.get("line_no") in valid_lines}
-    covered = quoted | set(data.get("not_quoted_line_nos", []))
-    # Lines the model neither quoted nor listed as not quoted are recorded as missing, explicitly.
-    data["not_quoted_line_nos"] = sorted((set(data.get("not_quoted_line_nos", [])) | (valid_lines - covered)) - quoted)
-    return data
+    return _finalize_extraction(data, vendor, rfx, model)

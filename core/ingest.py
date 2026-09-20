@@ -182,8 +182,9 @@ def image_to_text(data: bytes, media_type: str, log: list | None = None) -> dict
         system=system,
         content=[llm.image_block(data, media_type), llm.text_block("Transcribe this document.")],
         schema=ImageTranscriptionAI,
-        max_tokens=6000,
+        max_tokens=4000,
         log=log,
+        model=llm.extract_model_name(),
     )
     lines = [f"[image line {i}] {ln.rstrip()}" for i, ln in enumerate(res.transcription.splitlines(), start=1) if ln.strip()]
     return {"text": "\n".join(lines), "method": "vision-transcription", "legibility": res.legibility, "caveats": res.caveats}
