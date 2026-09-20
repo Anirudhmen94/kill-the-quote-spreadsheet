@@ -26,11 +26,14 @@
     </form>
     {% endif %}
     <span id="sim-busy" class="htmx-indicator text-sm text-slate-600 items-center gap-1">Generating Excel, PDF, Word, photo and email…</span>
-    {% set pending = state.vendors|selectattr('files')|rejectattr('status','equalto','extracted')|list %}
-    {% if pending %}
+    {% set retry_failed = state.vendors|selectattr('files')|selectattr('status','equalto','error')|list %}
+    {% set pending = state.vendors|selectattr('files')|rejectattr('status','equalto','extracted')|rejectattr('status','equalto','error')|rejectattr('status','equalto','excluded')|list %}
+    {% if pending or retry_failed %}
     <button id="extract-all" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
-      title="Live AI extraction on every pending vendor file, in parallel. Prices and questionnaire answers come back with evidence."
-      {% if not ai_ok %}disabled{% endif %}>Read all {{ pending|length }} pending</button>
+      title="{% if retry_failed and not pending %}Retry failed vendor extraction.{% else %}Live AI extraction on every pending vendor file, in parallel. Prices and questionnaire answers come back with evidence.{% endif %}"
+      {% if not ai_ok %}disabled{% endif %}>
+      {% if retry_failed and not pending %}Retry {{ retry_failed|length }} failed{% elif retry_failed %}Read {{ pending|length }} pending · retry {{ retry_failed|length }} failed{% else %}Read all {{ pending|length }} pending{% endif %}
+    </button>
     {% endif %}
     {% if state.vendors|selectattr('status','equalto','extracted')|list %}
     <a href="/rfx/{{ state.id }}/compare" class="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">Open comparison</a>

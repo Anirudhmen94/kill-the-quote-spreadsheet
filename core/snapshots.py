@@ -393,19 +393,32 @@ def create_calculation_snapshot(
 
 def processing_counts(state: dict) -> dict:
     """How many vendor responses are extracted / processing / failed / awaiting."""
+    # Use the canonical extraction status.  The legacy ``vendor.status`` field is
+    # intentionally lossy (for example, a failed re-read can still expose the
+    # previous extraction as ``extracted``), so it cannot be the source of truth
+    # for progress labels.
+    from . import vendor_extraction
+
     vendors = state.get("vendors", [])
     with_files = [v for v in vendors if v.get("files")]
-    extracted = [v for v in with_files if v.get("status") == "extracted"]
-    extracting = [v for v in with_files if v.get("status") == "extracting"]
-    failed = [v for v in with_files if v.get("status") == "error"]
-    excluded = [v for v in with_files if v.get("status") == "excluded"]
-    done_statuses = ("extracted", "extracting", "error", "excluded")
-    pending = [
-        v
-        for v in with_files
-        if v.get("status") in ("received", "awaiting")
-        or (v.get("files") and v.get("status") not in done_statuses)
+    statuses = {id(v): vendor_extraction.get_status(v) for v in with_files}
+    extracted = [
+        v for v in with_files
+        if statuses[id(v)] in (
+            vendor_extraction.STATUS_EXTRACTED,
+            vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+        )
     ]
+    extracting = [v for v in with_files if statuses[id(v)] == vendor_extraction.STATUS_EXTRACTING]
+    failed = [
+        v for v in with_files
+        if statuses[id(v)] in (
+            vendor_extraction.STATUS_FAILED_NO_PREVIOUS,
+            vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+        )
+    ]
+    excluded = [v for v in with_files if statuses[id(v)] == vendor_extraction.STATUS_EXCLUDED]
+    pending = [v for v in with_files if statuses[id(v)] == vendor_extraction.STATUS_AWAITING]
     awaiting_reply = [v for v in vendors if not v.get("files")]
     terminal_ok = len(extracted) + len(excluded)
     return {
@@ -418,7 +431,9 @@ def processing_counts(state: dict) -> dict:
         "pending": len(pending),
         "awaiting_reply": len(awaiting_reply),
         "processing": len(extracting) + len(pending),
-        "all_terminal": len(with_files) > 0 and len(extracting) == 0 and len(pending) == 0 and len(failed) == 0,
+        # A failed extraction is terminal and needs a retry/exclusion decision;
+        # it is not still processing.
+        "all_terminal": len(with_files) > 0 and len(extracting) == 0 and len(pending) == 0,
         "all_extracted": len(with_files) > 0 and len(extracted) == len(with_files),
         "clean_terminal": len(with_files) > 0
         and terminal_ok == len(with_files)

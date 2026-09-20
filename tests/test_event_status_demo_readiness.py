@@ -177,6 +177,62 @@ def test_demo_seed_clean_terminal():
     ]
 
 
+def test_failed_response_is_terminal_and_email_offers_retry():
+    """A failed read must never be presented as both pending and processing zero."""
+    st = _seed()
+    failed_vendor = next(v for v in st["vendors"] if v.get("files"))
+    vendor_extraction.set_failed(
+        failed_vendor,
+        technical="provider timeout",
+        had_previous=False,
+    )
+
+    counts = snapshots.processing_counts(st)
+    assert counts["failed"] == 1
+    assert counts["pending"] == 0
+    assert counts["processing"] == 0
+    assert counts["all_terminal"] is True
+
+    status = snapshots.data_status(st, context="email")
+    assert status["label"] == "Processing complete with failures"
+    assert "Processing 0 responses" not in status["text"]
+
+    storage.save_state(st["id"], st)
+    page = client.get(f"/rfx/{st['id']}/email")
+    assert page.status_code == 200
+    assert "Retry 1 failed" in page.text
+    assert "Read all 1 pending" not in page.text
+
+
+def test_completed_award_demo_is_frozen_and_sent():
+    st = demo_ops.build_awarded_happy_seed()
+    pack = event_status.active_valid_freeze(st)
+
+    assert pack is not None
+    assert pack["freeze_mode"] == "complete"
+    assert pack["covered_line_count"] == len(st["rfx"]["line_items"])
+    assert pack["uncovered_lines"] == []
+    assert st["status"] == "award_frozen"
+    assert st["happy_path_summary"]["winner"] == "Kraftline Industries"
+    assert st["happy_path_summary"]["notices_sent"] >= 1
+    assert any(
+        x.get("kind") == "award_notice" and x.get("vendor_name") == "Kraftline Industries"
+        for x in st["outbox"]
+    )
+
+    storage.save_state(st["id"], st)
+    page = client.get(f"/rfx/{st['id']}/award")
+    assert page.status_code == 200
+    assert "Frozen complete" in page.text
+    assert "Notices sent" in page.text
+
+
+def test_home_exposes_completed_award_demo():
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "Open completed award demo" in page.text
+
+
 def test_notices_blocked_for_requires_review():
     st = _seed()
     bad = _bad_complete_pack(st)

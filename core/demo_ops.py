@@ -524,6 +524,81 @@ def interview_reset(existing_id: str | None = None) -> dict:
     return build_golden_seed(existing_id)
 
 
+def build_awarded_happy_seed(existing_id: str | None = None) -> dict:
+    """Completed, defensible award used for the interview happy-path walkthrough.
+
+    The ordinary golden seed stays deliberately messy for exception handling.
+    This variant records a delivered quote for Kraftline's three omitted lines,
+    saves a fresh recommendation, creates a valid complete freeze, and stub-sends
+    the resulting award/regret notices.  All totals still come from the engine.
+    """
+    from . import award_actions
+
+    state = build_golden_seed(existing_id)
+    state["rfx"]["title"] = "Corrugated packaging — completed award demo"
+    state["brief"] = "Completed interview happy path — evidence-backed award sent."
+    state["is_golden_seed"] = False
+    state["is_awarded_demo"] = True
+
+    kraftline = next(v for v in state["vendors"] if v["vendor_id"] == "v2")
+    quoted = {q.get("line_no") for q in kraftline["extraction"]["line_quotes"]}
+    for line_no in (28, 29, 30):
+        if line_no not in quoted:
+            price = round(9.0 + line_no * 0.11, 2)
+            kraftline["extraction"]["line_quotes"].append(
+                _q(
+                    line_no,
+                    price,
+                    "INR",
+                    "per_pc",
+                    1,
+                    evidence=_ev(
+                        "Kraftline-final-clarification.pdf",
+                        f"p.1 r{line_no}",
+                        f"Line {line_no}: INR {price:.2f} per piece, delivered Chakan",
+                    ),
+                )
+            )
+    kraftline["extraction"]["not_quoted_line_nos"] = []
+    for term in kraftline["extraction"].get("commercials") or []:
+        if term.get("key") == "freight":
+            term["value"] = "Delivered Chakan — included in unit price"
+    kraftline["extraction"]["notes"] = (
+        "Final clarification received: all 30 lines quoted and freight included to Chakan. "
+        "Kraftline cleared every knockout quality gate."
+    )
+
+    snapshots.bump_vendor_data_version(
+        state,
+        "vendor_reprocessed",
+        affected_vendor_ids=["v2"],
+        affected_file_ids=[f["file_id"] for f in kraftline.get("files") or []],
+        notice="Happy-path clarification · Kraftline completed coverage and confirmed delivered pricing",
+    )
+    vendor_extraction.set_extracted(kraftline, version=snapshots.current_version(state))
+    snapshots.save_recommendation_from_live(
+        state,
+        "Kraftline cleared all knockout checks, supplied verified pricing for every requested line, "
+        "and confirmed freight is included to Chakan. The award is therefore complete and executable.",
+    )
+    pack = freeze.freeze_award(state, mode="complete", require_quality_gate=True)
+    award_actions.send_award_notices(state)
+    state["freeze_locked_by_demo"] = True
+    state["happy_path_summary"] = {
+        "winner": max(
+            (pack.get("share_by_vendor") or {}).items(),
+            key=lambda item: (item[1] or {}).get("extended_inr", 0),
+        )[0],
+        "covered_line_count": pack.get("covered_line_count"),
+        "total_extended_inr": pack.get("total_extended_inr"),
+        "freeze_id": pack.get("id"),
+        "notices_sent": len(
+            [x for x in state.get("outbox") or [] if x.get("freeze_id") == pack.get("id")]
+        ),
+    }
+    return state
+
+
 def lifecycle_stage(state: dict) -> dict:
     """Compact lifecycle derived from real data."""
     snapshots.ensure_snapshot_fields(state)

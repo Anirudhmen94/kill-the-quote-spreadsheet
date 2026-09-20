@@ -200,6 +200,14 @@ def demo_interview_reset():
     return RedirectResponse(f"/rfx/{state['id']}/compare", status_code=303)
 
 
+@app.post("/demo/award-happy-path")
+def demo_award_happy_path():
+    """Create a completed, frozen and stub-sent award for the demo walkthrough."""
+    state = demo_ops.build_awarded_happy_seed()
+    storage.save_state(state["id"], state)
+    return RedirectResponse(f"/rfx/{state['id']}/award", status_code=303)
+
+
 @app.post("/rfx/{rfx_id}/demo/interview-reset")
 def demo_interview_reset_inplace(rfx_id: str):
     state = demo_ops.interview_reset(existing_id=rfx_id)
