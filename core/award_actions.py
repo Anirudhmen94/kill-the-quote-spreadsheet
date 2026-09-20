@@ -51,6 +51,16 @@ def stakeholders(state: dict) -> list[dict]:
     return list(state.get("stakeholders") or DEFAULT_STAKEHOLDERS)
 
 
+def manager_contact(state: dict) -> dict:
+    """Primary manager for award-send notification (exactly one Outbox row)."""
+    for sh in stakeholders(state):
+        role = (sh.get("role") or "").lower()
+        if role == "manager" or "manager" in role:
+            return {"role": sh.get("role") or "Manager", "email": sh.get("email") or "manager@buyer.example"}
+    # Fallback if custom stakeholders omit Manager
+    return {"role": "Manager", "email": "manager@buyer.example"}
+
+
 def _append_outbox(state: dict, entry: dict) -> None:
     state.setdefault("outbox", []).append(entry)
 
@@ -113,7 +123,7 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
             if e.get("kind") in ("regret", "regret_notice")
         }
     )
-    stake_list = stakeholders(state)
+    mgr = manager_contact(state)
     confirmation = {
         "award_count": len(award_vendors),
         "regret_count": len(regret_vendors),
@@ -122,12 +132,14 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
         "total_extended_inr": totals.get("total_extended_inr"),
         "covered_line_count": totals.get("covered_line_count"),
         "manager_notified": True,
-        "manager_roles": [s.get("role") for s in stake_list],
-        "manager_emails": [s.get("email") for s in stake_list],
+        "manager_role": mgr["role"],
+        "manager_email": mgr["email"],
+        "manager_roles": [mgr["role"]],
+        "manager_emails": [mgr["email"]],
     }
     award_draft.mark_sent(state, confirmation)
 
-    stake_entries = notify_stakeholders(
+    manager_entries = notify_manager(
         state,
         action="award_drafts_sent",
         detail=(
@@ -141,7 +153,7 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
     flash = (
         f"Award drafts sent to {len(award_vendors)} vendor(s); "
         f"regret notices to {len(regret_vendors)}. "
-        f"Manager notified ({len(stake_entries)} stakeholder alert(s)). "
+        f"Manager notified ({mgr['email']}). "
         f"View Outbox."
     )
     push_flash(
@@ -153,7 +165,8 @@ def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
     )
     return {
         "sent": sent,
-        "stakeholders": stake_entries,
+        "stakeholders": manager_entries,
+        "manager": manager_entries,
         "flash": flash,
         "confirmation": confirmation,
     }
@@ -203,17 +216,6 @@ def _send_from_freeze(state: dict, vendor_id: str | None = None) -> dict:
         _append_outbox(state, entry)
         sent.append(entry)
 
-    stake_entries = notify_stakeholders(
-        state,
-        action="award_notices_sent",
-        detail=(
-            f"Sent {len(sent)} vendor notice(s)/regret(s) for freeze {pack.get('id')} "
-            f"(snapshot {pack.get('calculation_snapshot_id') or '—'}). "
-            f"Strategy: {pack.get('strategy') or pack.get('strategy_key') or '—'}. "
-            f"Total: {engine.fmt_inr(pack.get('total_extended_inr'))}."
-        ),
-        pack=pack,
-    )
     award_count = sum(1 for entry in sent if entry.get("kind") == "award_notice")
     regret_count = sum(1 for entry in sent if entry.get("kind") in ("regret", "regret_notice"))
     award_vendors = sorted(
@@ -226,17 +228,32 @@ def _send_from_freeze(state: dict, vendor_id: str | None = None) -> dict:
             if e.get("kind") in ("regret", "regret_notice")
         }
     )
+    mgr = manager_contact(state)
     confirmation = {
         "award_count": award_count,
         "regret_count": regret_count,
         "award_vendors": award_vendors,
         "regret_vendors": regret_vendors,
         "manager_notified": True,
-        "manager_roles": [s.get("role") for s in stakeholders(state)],
+        "manager_role": mgr["role"],
+        "manager_email": mgr["email"],
+        "manager_roles": [mgr["role"]],
+        "manager_emails": [mgr["email"]],
     }
+    manager_entries = notify_manager(
+        state,
+        action="award_notices_sent",
+        detail=(
+            f"Sent {len(sent)} vendor notice(s)/regret(s) for freeze {pack.get('id')} "
+            f"(snapshot {pack.get('calculation_snapshot_id') or '—'}). "
+            f"Strategy: {pack.get('strategy') or pack.get('strategy_key') or '—'}. "
+            f"Total: {engine.fmt_inr(pack.get('total_extended_inr'))}."
+        ),
+        pack=pack,
+    )
     flash = (
         f"Successfully stub-sent {award_count} award notice(s) and {regret_count} regret notice(s) "
-        f"to Outbox (no real SMTP). Manager notified. View Outbox."
+        f"to Outbox (no real SMTP). Manager notified ({mgr['email']}). View Outbox."
     )
     push_flash(
         state,
@@ -245,7 +262,72 @@ def _send_from_freeze(state: dict, vendor_id: str | None = None) -> dict:
         cta_label="View Email Outbox",
         confirmation=confirmation,
     )
-    return {"sent": sent, "stakeholders": stake_entries, "flash": flash, "confirmation": confirmation}
+    return {
+        "sent": sent,
+        "stakeholders": manager_entries,
+        "manager": manager_entries,
+        "flash": flash,
+        "confirmation": confirmation,
+    }
+
+
+def notify_manager(
+    state: dict, action: str, detail: str, pack: dict | None = None
+) -> list[dict]:
+    """Append exactly one manager notification to Outbox (award-send path)."""
+    mgr = manager_contact(state)
+    pack = pack or freeze.current_freeze(state)
+    snap = total = strategy = None
+    vendors_summary = ""
+    if pack:
+        snap = pack.get("calculation_snapshot_id")
+        total = pack.get("total_extended_inr")
+        strategy = pack.get("strategy") or pack.get("strategy_key")
+        share = pack.get("share_by_vendor") or {}
+        if share:
+            bits = []
+            for n, s in share.items():
+                if isinstance(s, dict):
+                    lines = s.get("lines", s.get("line_count", "?"))
+                    bits.append(f"{n} ({lines} lines)")
+                else:
+                    bits.append(str(n))
+            vendors_summary = ", ".join(bits)
+    elif isinstance(state.get("award_draft"), dict):
+        totals = award_draft.draft_totals(state)
+        total = totals.get("total_extended_inr")
+        strategy = "award draft · quality-gated line assign"
+        share = totals.get("share_by_vendor") or {}
+        bits = [f"{n} ({s.get('lines')} lines)" for n, s in share.items()]
+        vendors_summary = ", ".join(bits)
+    title = (state.get("rfx") or {}).get("title") or state["id"]
+    subject = f"[KQ] {action.replace('_', ' ').title()} — {title}"
+    body = (
+        f"Manager notification for {mgr['role']} ({mgr['email']}).\n\n"
+        f"Event: {title} ({state['id']})\n"
+        f"Action: {action}\n"
+        f"When: {_now()}\n"
+        f"Snapshot: {snap or '—'}\n"
+        f"Strategy: {strategy or '—'}\n"
+        f"Total extended: {engine.fmt_inr(total) if total is not None else '—'}\n"
+        f"Vendors: {vendors_summary or '—'}\n\n"
+        f"{detail}\n"
+    )
+    entry = {
+        "kind": "manager_notice",
+        "to": mgr["email"],
+        "vendor_id": None,
+        "vendor_name": mgr["role"],
+        "subject": subject,
+        "body": body,
+        "sent_at": _now(),
+        "delivery": "stubbed (no SMTP)",
+        "action": action,
+        "freeze_id": (pack or {}).get("id") if pack else None,
+        "snapshot_id": snap,
+    }
+    _append_outbox(state, entry)
+    return [entry]
 
 
 def notify_stakeholders(

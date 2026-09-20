@@ -243,7 +243,7 @@ def test_award_send_notices_export_and_stakeholder_alerts():
     new_mail = outbox[before:]
     assert any(o.get("vendor_id") for o in new_mail)
     assert any(
-        o.get("kind") == "stakeholder_alert" or (o.get("to") or "").endswith("@buyer.example")
+        o.get("kind") in ("manager_notice", "stakeholder_alert") or (o.get("to") or "").endswith("@buyer.example")
         for o in new_mail
     )
     vendor_mail = [o for o in new_mail if o.get("vendor_id")]

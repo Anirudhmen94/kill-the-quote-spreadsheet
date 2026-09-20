@@ -71,42 +71,67 @@
 </div>
 {% endif %}
 
-{# Confirmation dialog after send #}
+{# Confirmation modal after send #}
 {% if confirmation %}
-<div class="mt-4 rounded-xl border-2 border-emerald-500 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" data-testid="award-send-confirmation" role="dialog" aria-labelledby="award-confirm-heading">
-  <h2 id="award-confirm-heading" class="text-lg font-semibold">Award drafts sent</h2>
-  <p class="mt-1 text-sm">
-    Award drafts sent to <strong>{{ confirmation.award_count or (confirmation.award_vendors|length) }}</strong>
-    · regret notices to <strong>{{ confirmation.regret_count or (confirmation.regret_vendors|length) }}</strong>.
-    {% if confirmation.manager_notified %}
-    <span data-testid="award-manager-notified"> Manager notified</span>
-    {% if confirmation.manager_roles %} ({{ confirmation.manager_roles|join(', ') }}){% endif %}.
-    {% endif %}
-  </p>
-  <div class="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
-    <div>
-      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Award drafts</div>
-      <ul class="mt-1 list-disc pl-5">
-        {% for n in confirmation.award_vendors or [] %}
-        <li>{{ n }}</li>
-        {% else %}
-        <li class="list-none text-emerald-800/70">—</li>
-        {% endfor %}
-      </ul>
+<div id="award-send-confirmation-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="award-send-confirmation" role="dialog" aria-modal="true" aria-labelledby="award-confirm-heading">
+  <div class="absolute inset-0 bg-slate-900/40" data-award-confirm-dismiss></div>
+  <div class="relative w-full max-w-lg rounded-2xl border-2 border-emerald-500 bg-white px-6 py-5 text-emerald-950 shadow-xl">
+    <h2 id="award-confirm-heading" class="text-lg font-semibold">Award drafts sent</h2>
+    <p class="mt-1 text-sm text-slate-700">
+      Stub emails queued to Outbox (no real SMTP).
+    </p>
+    <div class="mt-4 space-y-3 text-sm">
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Award drafts sent</div>
+        <ul class="mt-1 list-disc pl-5" data-testid="award-confirm-winners">
+          {% for n in confirmation.award_vendors or [] %}
+          <li>{{ n }}</li>
+          {% else %}
+          <li class="list-none text-slate-500">—</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div>
+        <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Regret notices sent</div>
+        <ul class="mt-1 list-disc pl-5" data-testid="award-confirm-regrets">
+          {% for n in confirmation.regret_vendors or [] %}
+          <li>{{ n }}</li>
+          {% else %}
+          <li class="list-none text-slate-500">—</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% if confirmation.manager_notified %}
+      <div data-testid="award-manager-notified">
+        <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Manager notified</div>
+        <p class="mt-1" data-testid="award-confirm-manager-email">
+          {{ confirmation.manager_email or (confirmation.manager_emails[0] if confirmation.manager_emails else 'manager@buyer.example') }}
+          {% if confirmation.manager_role or confirmation.manager_roles %}
+          <span class="text-slate-500">({{ confirmation.manager_role or confirmation.manager_roles[0] }})</span>
+          {% endif %}
+        </p>
+      </div>
+      {% endif %}
     </div>
-    <div>
-      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Regret notices</div>
-      <ul class="mt-1 list-disc pl-5">
-        {% for n in confirmation.regret_vendors or [] %}
-        <li>{{ n }}</li>
-        {% else %}
-        <li class="list-none text-emerald-800/70">—</li>
-        {% endfor %}
-      </ul>
+    <div class="mt-5 flex flex-wrap items-center gap-3">
+      <a href="/rfx/{{ state.id }}/email#outbox" class="inline-flex items-center rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800" data-testid="award-confirm-view-outbox">View Outbox</a>
+      <button type="button" class="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50" data-award-confirm-dismiss data-testid="award-confirm-close">Close</button>
     </div>
   </div>
-  <a href="/rfx/{{ state.id }}/email#outbox" class="inline-block mt-3 text-sm font-medium underline">View Email Outbox</a>
 </div>
+<script>
+(function () {
+  var modal = document.getElementById('award-send-confirmation-modal');
+  if (!modal) return;
+  function dismiss() { modal.remove(); }
+  modal.querySelectorAll('[data-award-confirm-dismiss]').forEach(function (el) {
+    el.addEventListener('click', dismiss);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') dismiss();
+  });
+})();
+</script>
 {% endif %}
 
 <div class="mt-6 space-y-8 max-w-5xl">

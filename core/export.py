@@ -542,7 +542,7 @@ def audit_trail_csv(state: dict) -> bytes:
             ]
         )
     for m in state.get("outbox") or []:
-        if (m.get("kind") or "") in ("award_notice", "regret", "regret_notice", "stakeholder_alert"):
+        if (m.get("kind") or "") in ("award_notice", "regret", "regret_notice", "manager_notice", "stakeholder_alert"):
             w.writerow(
                 [
                     "outbox",

@@ -144,17 +144,16 @@ def test_send_award_drafts_notifies_manager_and_confirmation():
     assert r.status_code in (302, 303)
     st2 = storage.load_state(st["id"])
     new_mail = (st2.get("outbox") or [])[before:]
-    stake = [o for o in new_mail if o.get("kind") == "stakeholder_alert"]
-    assert stake
-    assert any(
-        "manager" in (o.get("to") or "").lower()
-        or (o.get("vendor_name") or "").lower() == "manager"
-        or "Manager" in (o.get("subject") or "")
-        or o.get("to") == "manager@buyer.example"
-        for o in stake
-    )
+    awards = [o for o in new_mail if o.get("kind") == "award_notice"]
+    regrets = [o for o in new_mail if o.get("kind") in ("regret", "regret_notice")]
+    manager = [o for o in new_mail if o.get("kind") == "manager_notice"]
+    assert awards and regrets
+    assert len(manager) == 1
+    assert manager[0].get("to") == "manager@buyer.example"
+    assert "manager" in (manager[0].get("body") or "").lower()
     conf = (st2.get("award_draft") or {}).get("send_confirmation") or {}
     assert conf.get("manager_notified") is True
+    assert conf.get("manager_email") == "manager@buyer.example"
     flash = st2.get("flash") or {}
     assert "manager" in (flash.get("message") or "").lower()
 
@@ -162,6 +161,8 @@ def test_send_award_drafts_notifies_manager_and_confirmation():
     assert 'data-testid="award-send-confirmation"' in page.text
     assert 'data-testid="award-manager-notified"' in page.text
     assert "Manager notified" in page.text
+    assert "manager@buyer.example" in page.text
+    assert 'data-testid="award-confirm-close"' in page.text
 
 
 def test_preload_from_analyst_unit():

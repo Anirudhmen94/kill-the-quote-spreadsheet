@@ -63,6 +63,7 @@ def test_email_outbox_filter_bar_and_row_data_attrs():
     assert 'data-filter-control="kind"' in r.text
     assert 'value="clarification"' in r.text
     assert 'value="award_notice"' in r.text
+    assert 'value="manager_notice"' in r.text
     assert 'value="stakeholder_alert"' in r.text
     # Separate URL key prefixes for inbox vs outbox
     assert "iq" in r.text and "oq" in r.text

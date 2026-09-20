@@ -133,22 +133,53 @@ def test_send_award_and_regret_with_confirmation():
     st2 = storage.load_state(st["id"])
     outbox = st2.get("outbox") or []
     assert len(outbox) > before
-    vendor_mail = [o for o in outbox[before:] if o.get("vendor_id")]
-    assert any(o.get("kind") == "award_notice" for o in vendor_mail)
-    assert any(o.get("kind") in ("regret", "regret_notice") for o in vendor_mail)
+    new_mail = outbox[before:]
+    award_mail = [o for o in new_mail if o.get("kind") == "award_notice"]
+    regret_mail = [o for o in new_mail if o.get("kind") in ("regret", "regret_notice")]
+    manager_mail = [o for o in new_mail if o.get("kind") == "manager_notice"]
+    # Distinct Outbox rows: N award + M regret + exactly 1 manager
+    assert len(award_mail) >= 1
+    assert len(regret_mail) >= 1
+    assert len(manager_mail) == 1
+    assert manager_mail[0].get("to") == "manager@buyer.example"
+    assert manager_mail[0].get("body")
+    assert len(new_mail) == len(award_mail) + len(regret_mail) + 1
+    # Award emails only include winners' lines
+    for o in award_mail:
+        assert o.get("line_nos")
+        assert o.get("to")
+        assert o.get("subject")
+        assert o.get("body")
+    for o in regret_mail:
+        assert o.get("to")
+        assert o.get("subject")
+        assert o.get("body")
+
     draft = st2.get("award_draft") or {}
     assert draft.get("sent") is True
     conf = draft.get("send_confirmation") or {}
     assert conf.get("award_vendors")
     assert conf.get("regret_vendors")
-    # Award emails only include winners' lines
-    for o in vendor_mail:
-        if o.get("kind") == "award_notice":
-            assert o.get("line_nos")
+    assert conf.get("manager_notified") is True
+    assert conf.get("manager_email") == "manager@buyer.example"
+    assert len(conf.get("award_vendors") or []) == len(award_mail)
+    assert len(conf.get("regret_vendors") or []) == len(regret_mail)
 
     page = client.get(f"/rfx/{st['id']}/award")
     assert 'data-testid="award-send-confirmation"' in page.text
+    assert 'aria-modal="true"' in page.text
     assert "Award drafts sent" in page.text
+    assert "Regret notices sent" in page.text
+    assert 'data-testid="award-confirm-view-outbox"' in page.text
+    assert 'data-testid="award-confirm-close"' in page.text
+    assert 'data-testid="award-manager-notified"' in page.text
+    assert "manager@buyer.example" in page.text
+    # Outbox lists each email clearly
+    email_page = client.get(f"/rfx/{st['id']}/email#outbox")
+    assert email_page.status_code == 200
+    assert 'data-kind="award_notice"' in email_page.text
+    assert 'data-kind="regret"' in email_page.text
+    assert 'data-kind="manager_notice"' in email_page.text
     disp = event_status.derive_event_display_status(storage.load_state(st["id"]))
     assert disp["key"] == event_status.STATUS_AWARD_DRAFTS_SENT
     assert disp["label"] == "Award drafts sent"
