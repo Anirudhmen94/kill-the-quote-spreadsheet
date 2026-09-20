@@ -54,43 +54,6 @@
         <span class="hidden md:inline-flex rounded-full bg-slate-100 text-slate-600 px-2 py-0.5 border border-slate-200">{{ storage }}</span>
       </div>
     </div>
-    {% if rfx_id and lifecycle %}
-    <div class="border-t border-slate-100 bg-slate-50/80">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span class="text-slate-500 mr-1">Lifecycle</span>
-        {% for s in lifecycle.steps %}
-          <span class="rounded-full px-2 py-0.5 border
-            {% if s.state == 'current' %}bg-slate-900 text-white border-slate-900
-            {% elif s.state == 'done' %}bg-emerald-50 text-emerald-800 border-emerald-200
-            {% else %}bg-white text-slate-400 border-slate-200{% endif %}">{{ s.label }}</span>
-          {% if not loop.last %}<span class="text-slate-300">→</span>{% endif %}
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
-    {% if rfx_id %}
-    <div class="border-t border-slate-100 bg-white">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-1.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-        <span class="font-medium text-slate-800">Demo</span>
-        <span class="rounded-full px-2 py-0.5 border {% if demo_mode %}bg-emerald-50 text-emerald-800 border-emerald-200{% else %}bg-slate-100 text-slate-600 border-slate-200{% endif %}">{% if demo_mode %}Ready{% else %}Off{% endif %}</span>
-        <form method="post" action="/rfx/{{ rfx_id }}/demo/interview-reset" class="inline"
-              onsubmit="return confirm('Interview reset restores the golden messy seed (partial quotes, USD, photo, per-kg, unresolved). Continue?')">
-          <button class="rounded border border-slate-300 bg-white px-2 py-0.5 hover:bg-slate-50">Interview reset</button>
-        </form>
-        <form method="post" action="/rfx/{{ rfx_id }}/demo/full-reset" class="inline flex items-center gap-1"
-              onsubmit="return confirm('Full reset clears extractions and awards. Demo mode blocks this unless you confirm FULL.')">
-          <input name="confirm" placeholder="FULL" class="w-14 rounded border border-slate-300 px-1 py-0.5 text-[11px]">
-          <button class="rounded border border-rose-300 text-rose-700 bg-white px-2 py-0.5 hover:bg-rose-50">Full reset</button>
-        </form>
-        <form method="post" action="/rfx/{{ rfx_id }}/demo/mode" class="inline">
-          <input type="hidden" name="enabled" value="{% if demo_mode %}0{% else %}1{% endif %}">
-          <button class="rounded border border-slate-300 bg-white px-2 py-0.5 hover:bg-slate-50">{% if demo_mode %}Disable demo mode{% else %}Enable demo mode{% endif %}</button>
-        </form>
-        <a href="/demo/script" class="underline hover:text-slate-900" target="_blank">DEMO_SCRIPT</a>
-        <a href="/demo/decisions" class="underline hover:text-slate-900" target="_blank">DECISIONS</a>
-      </div>
-    </div>
-    {% endif %}
   </header>
 
   {% if not ai_ok %}
