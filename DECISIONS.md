@@ -14,7 +14,7 @@
 
 **Freeze before you defend.** Award freeze locks strategy, line awards, totals, notices and regrets to a calculation snapshot. Later re-reads or exception overrides make that freeze historical so an old memo cannot sit next to new totals.
 
-**Compare vs Exceptions.** Compare is five-vendor comparison only (matrix, colours, read-only evidence, gates as badges). Exceptions owns flagged anomalies: Override (apply into decision), Send for approval (pending + stub outbox), or Deny (close without putting a value into award totals). Pending is Approve/Reject only; Resolved includes overridden, approved, and denied.
+**Compare absorbs anomalies.** One Compare tab: five-vendor price matrix plus an Anomalies panel (`#anomalies`) for flagged cells, gate Fail/Partial, and coverage gaps. Override (apply into decision), Send for approval (pending + stub outbox), or Deny (close without putting a value into award totals) — same three actions on open anomaly rows and in the flagged-cell evidence drawer. Pending is Approve/Reject only; Resolved includes overridden, approved, and denied. `/exceptions` redirects to `/compare#anomalies`.
 
 **Email is the channel, stubbed on purpose.** Outbound RFx, clarifications (editable drafts), award/regret notices, and internal stakeholder alerts all land in Outbox with no real SMTP — per the brief’s “stub the plumbing, don’t fake the AI loops.”
 

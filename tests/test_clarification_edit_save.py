@@ -96,4 +96,4 @@ def test_header_has_no_lifecycle_or_demo_strips():
     assert "Enable demo mode" not in r.text
     assert "Disable demo mode" not in r.text
     assert 'href="/demo/script"' not in r.text
-    assert "Exceptions" in r.text
+    assert "Compare" in r.text

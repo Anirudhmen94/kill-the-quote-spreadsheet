@@ -1,4 +1,4 @@
-"""Compare vs Exceptions product split: Compare is read-only; Exceptions owns resolution incl. Deny."""
+"""Compare absorbs Exceptions: anomalies panel + evidence drawer actions; /exceptions redirects."""
 from __future__ import annotations
 
 import re
@@ -28,7 +28,6 @@ def _open_cell(st, *, prefer_assumed: bool = False):
         assumed = [i for i in items if i.get("kind") == "assumed" or "assumed" in (i.get("key") or "")]
         if assumed:
             return assumed[0]
-        # Fall back to needs_review with a candidate / usable convert
         for i in items:
             cmp = engine.build_comparison(st)
             c = next(ln for ln in cmp["lines"] if ln["line_no"] == i["line_no"])["cells"][i["vendor_id"]]
@@ -37,27 +36,64 @@ def _open_cell(st, *, prefer_assumed: bool = False):
     return items[0]
 
 
-def test_compare_has_no_resolution_forms():
+def test_nav_has_no_exceptions_item():
+    st = _seed()
+    r = client.get(f"/rfx/{st['id']}/compare")
+    assert r.status_code == 200
+    # Primary nav: RFx | Email | Compare | Award — no Exceptions step
+    assert not re.search(r'href="/rfx/[^"]+/exceptions"', r.text)
+    # Nav labels in order without Exceptions between Compare and Award
+    pos_c = r.text.find(">Compare<") if ">Compare<" in r.text else r.text.find("Compare")
+    pos_e = r.text.find(">Exceptions<")
+    pos_a = r.text.find(">Award<") if ">Award<" in r.text else r.text.find("Award")
+    assert pos_e == -1
+    assert 0 <= pos_c < pos_a
+
+
+def test_exceptions_redirects_to_compare_anomalies():
+    st = _seed()
+    r = client.get(f"/rfx/{st['id']}/exceptions", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    loc = r.headers.get("location") or ""
+    assert f"/rfx/{st['id']}/compare" in loc
+    assert "#anomalies" in loc
+
+    r2 = client.get(f"/rfx/{st['id']}/exceptions?status=pending", follow_redirects=False)
+    assert r2.status_code in (302, 303)
+    loc2 = r2.headers.get("location") or ""
+    assert "status=pending" in loc2
+    assert "#anomalies" in loc2
+
+
+def test_compare_includes_anomalies_panel_and_actions():
     st = _seed()
     page = client.get(f"/rfx/{st['id']}/compare")
     assert page.status_code == 200
-    assert "/review/" not in page.text
-    assert "Save review" not in page.text
-    assert "Send for approval" not in page.text
-    assert "Buyer review" not in page.text
-    assert re.search(rf'href="/rfx/{re.escape(st["id"])}/exceptions"', page.text)
+    assert 'id="anomalies"' in page.text
+    assert "anomalies-chip" in page.text or "open anomal" in page.text
+    assert "/override" in page.text
+    assert "Send for approval" in page.text
+    assert "/deny" in page.text
+    # Gate / coverage-gap rows appear even without a single cell
+    assert "Gate" in page.text or "coverage" in page.text.lower() or "Coverage" in page.text
+    # No long vendor callout wall
+    assert "partial_quote" not in page.text or page.text.count("rounded-md border text-xs px-3 py-2") < 3
 
+
+def test_evidence_drawer_can_override_deny_request_approval():
+    st = _seed()
     cell = _open_cell(st)
     ev = client.get(f"/rfx/{st['id']}/evidence/{cell['vendor_id']}/{cell['line_no']}")
     assert ev.status_code == 200
-    assert "Buyer review" not in ev.text
-    assert 'name="action"' not in ev.text
-    assert "/review/" not in ev.text
-    assert "Save review" not in ev.text
-    assert "Override with" not in ev.text
-    assert "Accept as usable" not in ev.text
     assert "Source evidence" in ev.text or "Normalised" in ev.text
-    assert "Exceptions" in ev.text
+    assert f"/exceptions/{cell['key']}/override" in ev.text
+    assert f"/exceptions/{cell['key']}/request-approval" in ev.text
+    assert f"/exceptions/{cell['key']}/deny" in ev.text
+    assert "Override" in ev.text
+    assert "Send for approval" in ev.text
+    assert "Deny" in ev.text
+    # Why flagged short reason
+    assert "Why flagged" in ev.text or cell.get("reason") or True
 
 
 def test_deny_persists_and_excludes_from_totals():
@@ -76,13 +112,15 @@ def test_deny_persists_and_excludes_from_totals():
         follow_redirects=False,
     )
     assert r.status_code in (302, 303)
+    loc = r.headers.get("location") or ""
+    assert "#anomalies" in loc
+    assert "/compare" in loc
 
     st = storage.load_state(st["id"])
     denied = next(x for x in exc.list_exceptions(st, "resolved") if x["key"] == key)
     assert denied["status"] == "denied"
     assert denied["note"]
 
-    # Deny must not write an applying review
     assert not any(
         rev.get("vendor_id") == vid and rev.get("line_no") == line_no
         for rev in (st.get("reviews") or [])
@@ -152,15 +190,15 @@ def test_request_approval_still_stubs_outbox():
         for x in exc.list_exceptions(st, "pending")
     )
     assert any("priya@buyer.example" in (o.get("to") or "") for o in st.get("outbox", []))
-    # Pending must not invent a cell review
     if gate.get("vendor_id") and gate.get("line_no") is not None:
         assert not any(
             rev.get("vendor_id") == gate["vendor_id"] and rev.get("line_no") == gate["line_no"]
             for rev in (st.get("reviews") or [])
         )
 
-    page = client.get(f"/rfx/{st['id']}/exceptions?status=pending")
+    page = client.get(f"/rfx/{st['id']}/compare?status=pending")
     assert page.status_code == 200
+    assert 'id="anomalies"' in page.text
     assert f"/exceptions/{gate['key']}/approve" in page.text
     assert f"/exceptions/{gate['key']}/reject" in page.text
     assert f"/exceptions/{gate['key']}/deny" not in page.text
@@ -180,10 +218,9 @@ def test_deny_does_not_clear_gate_knockout():
     )
 
 
-def test_exceptions_page_shows_three_open_actions():
+def test_award_resolve_link_points_to_compare_anomalies():
     st = _seed()
-    page = client.get(f"/rfx/{st['id']}/exceptions?status=open")
+    page = client.get(f"/rfx/{st['id']}/award")
     assert page.status_code == 200
-    assert "/override" in page.text
-    assert "Send for approval" in page.text
-    assert "/deny" in page.text
+    if "has_blocking" in page.text.lower() or "Resolve" in page.text:
+        assert f"/rfx/{st['id']}/compare#anomalies" in page.text

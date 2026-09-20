@@ -1,4 +1,4 @@
-"""Comparison grid, read-only evidence drawer, award page and exports."""
+"""Comparison grid, anomalies panel, evidence drawer, award page and exports."""
 from __future__ import annotations
 
 import io
@@ -8,7 +8,7 @@ import pymupdf
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 
-from core import award_actions, awardability, demo_ops, edge_callouts, engine, exceptions as exc_mod, export, freeze, ingest, snapshots, storage
+from core import award_actions, awardability, demo_ops, engine, exceptions as exc_mod, export, freeze, ingest, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -45,11 +45,10 @@ def _context_lines(text: str, snippet: str, radius: int = 3) -> list[dict]:
 
 
 @router.get("/rfx/{rfx_id}/compare", response_class=HTMLResponse)
-def compare_page(request: Request, rfx_id: str):
+def compare_page(request: Request, rfx_id: str, status: str = "open"):
     state = load_or_404(rfx_id)
     cmp = awardability.enrich_state_comparison(state) if any(v.get("extraction") for v in state["vendors"]) else engine.build_comparison(state)
     counts = snapshots.processing_counts(state)
-    callouts = edge_callouts.edge_callouts(cmp) if cmp.get("vendors") else []
     if any(v.get("extraction") for v in state["vendors"]):
         snapshots.create_calculation_snapshot(
             state,
@@ -67,18 +66,24 @@ def compare_page(request: Request, rfx_id: str):
 
     ready = any(v.get("extraction") for v in state["vendors"])
     prompts = demo_ops.DEMO_PROMPTS if demo_ops.is_demo_mode(state) else SUGGESTED
+    filter_status = status if status in ("open", "pending", "resolved", "all") else "open"
+    anomaly_items = exc_mod.list_exceptions(state, None if filter_status == "all" else filter_status)
+    exc_counts = exc_mod.counts(state)
     return render(
         request,
         "compare.html",
         state=state,
         cmp=cmp,
         counts=counts,
-        callouts=callouts,
         exclusion_summary=cmp.get("exclusion_summary"),
         gates=cmp.get("gates"),
         active="compare",
         suggested=prompts,
         ready=ready,
+        anomaly_items=anomaly_items,
+        exc_counts=exc_counts,
+        filter_status=filter_status,
+        has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
     )
 
 
@@ -99,7 +104,32 @@ def evidence(request: Request, rfx_id: str, vendor_id: str, line_no: int):
     ctx = _context_lines(text, ev.get("snippet", "")) if ev else []
     # other vendor rows the model mapped to this line (duplicates / alternates)
     others = [q for q in (vendor.get("extraction") or {}).get("line_quotes", []) if q.get("line_no") == line_no]
-    return render(request, "partials/evidence_drawer.html", state=state, v=vendor, line=line, cell=cell, ev=ev, file=file, ctx=ctx, others=others, fx=state["fx"])
+    # Cell-level anomaly (not gate/coverage) for resolution actions in the drawer
+    exception_item = next(
+        (
+            i
+            for i in exc_mod.list_exceptions(state)
+            if i.get("vendor_id") == vendor_id
+            and i.get("line_no") == line_no
+            and not str(i.get("kind") or "").startswith("gate")
+            and i.get("kind") != "coverage_gap"
+        ),
+        None,
+    )
+    return render(
+        request,
+        "partials/evidence_drawer.html",
+        state=state,
+        v=vendor,
+        line=line,
+        cell=cell,
+        ev=ev,
+        file=file,
+        ctx=ctx,
+        others=others,
+        fx=state["fx"],
+        exception_item=exception_item,
+    )
 
 
 @router.get("/rfx/{rfx_id}/evidence-image/{vendor_id}/{file_id}")
