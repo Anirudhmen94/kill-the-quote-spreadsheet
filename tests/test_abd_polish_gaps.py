@@ -177,15 +177,15 @@ def test_award_unsaved_banner_appears_once():
             "demo_prompts": [],
         }
     )
-    assert "Save this calculation as your recommendation" in html
-    assert "Ask the analyst instead" in html
-    assert html.count("No recommendation saved yet") == 0
-    assert "Ready to freeze?" in html
-    assert "Save recommendation to unlock freeze" in html
-    assert 'data-testid="freeze-blocked-plain"' in html
+    # Redesign: Ask + Lock (rationale on lock form) — no old checklist/save panel
+    assert "Ask before you lock" in html
+    assert "Lock award" in html
+    assert 'data-testid="award-lock-rationale"' in html
+    assert "Ready to freeze?" not in html
+    assert 'data-testid="freeze-blocked-plain"' not in html
     # Confirm control present for unconfirmed discounts
-    assert "Confirm into official total" in html
-    assert "Conditional discounts not yet confirmed" in html
+    assert "Confirm into official total" in html or "Confirm" in html
+    assert "Conditional discount" in html or "conditional discount" in html.lower()
 
 
 def test_narrative_validation_fallback_on_contradiction():

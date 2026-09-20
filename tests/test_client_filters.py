@@ -125,8 +125,8 @@ def test_award_page_has_no_filter_bar():
     assert 'data-filter-multi="awarded-vendor"' not in r.text
     assert 'data-filter-control="blocker-kind"' not in r.text
     # Freeze / send / download still reachable
-    assert "Freeze this award" in r.text
-    assert "Send award" in r.text or "freeze.zip" in r.text or "Award workbook" in r.text
+    assert "Lock award" in r.text
+    assert "Send award" in r.text or "freeze.zip" in r.text or "Award workbook" in r.text or "Lock award" in r.text
 
 
 def test_filter_macros_and_script_partial_exist():

@@ -229,6 +229,12 @@ def award_page(request: Request, rfx_id: str):
     if live.get("available") and freeze_checklist.get("needs_save"):
         draft_summary = snapshots.build_live_recommendation_summary(live, vendor_packs=vendor_packs)
 
+    from core import award_ask
+
+    lock_rationale_prefill = ""
+    if live.get("available") and not life.get("can_freeze"):
+        lock_rationale_prefill = award_ask.default_lock_rationale(state, live)
+
     return render(
         request,
         "award.html",
@@ -255,8 +261,126 @@ def award_page(request: Request, rfx_id: str):
         freeze_checklist=freeze_checklist,
         freeze_next_step=freeze_checklist.get("human_blocked_reason"),
         draft_recommendation_summary=draft_summary,
+        award_premades=award_ask.PREMADES,
+        lock_rationale_prefill=lock_rationale_prefill,
     )
 
+
+
+
+@router.post("/rfx/{rfx_id}/award/ask-premade", response_class=HTMLResponse)
+async def award_ask_premade(request: Request, rfx_id: str, prompt_id: str = Form("")):
+    """Premade Award Ask — engine-first, version-bound cache (no Claude on click)."""
+    from core import award_ask
+
+    state = load_or_404(rfx_id)
+    form = await request.form()
+    pid = (prompt_id or form.get("prompt_id") or "").strip()
+    if not pid:
+        return error_fragment("Unknown premade prompt.", 400)
+    if not any(v.get("extraction") for v in state["vendors"]):
+        return error_fragment("Extract at least one vendor response before asking.", 400)
+    try:
+        result = award_ask.get_or_build_premade(state, pid)
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    state.setdefault("chat", []).append(result)
+    storage.save_state(rfx_id, state)
+    idx = len(state["chat"]) - 1
+    return render(request, "partials/award_ask_answer.html", state=state, m=result, idx=idx)
+
+
+@router.post("/rfx/{rfx_id}/award/ask", response_class=HTMLResponse)
+def award_ask_live(request: Request, rfx_id: str, question: str = Form(...)):
+    """Free-ask on Award — live Claude via analyst.ask."""
+    from routes import ask as ask_routes
+    from core import llm
+
+    state = load_or_404(rfx_id)
+    if not any(v.get("extraction") for v in state["vendors"]):
+        return error_fragment("Extract at least one vendor response before asking.", 400)
+    q = (question or "").strip()
+    if not q:
+        return error_fragment("Type a question.", 400)
+    ok, msg = ask_routes._acquire_ask(rfx_id)
+    if not ok:
+        return error_fragment(msg, 409)
+    try:
+        try:
+            result = ask_routes._run_ask(state, q)
+        except llm.AINotConfigured as e:
+            return error_fragment(str(e), 400)
+        except RuntimeError as e:
+            return error_fragment(f"Data changed while answering; please ask again. ({e})", 409)
+        except Exception as e:
+            failed = {
+                "question": q,
+                "answer": f"**The analyst failed.** {e}",
+                "error": str(e),
+                "status": "failed",
+                "trace": [],
+                "tables": [],
+                "charts": [],
+                "caveats": [],
+                "at": now_iso(),
+                "award_shaped": True,
+            }
+            state.setdefault("chat", []).append(failed)
+            storage.save_state(rfx_id, state)
+            return render(
+                request,
+                "partials/award_ask_answer.html",
+                state=state,
+                m=failed,
+                idx=len(state["chat"]) - 1,
+            )
+        result["award_shaped"] = True
+        state.setdefault("chat", []).append(result)
+        storage.save_state(rfx_id, state)
+        return render(
+            request,
+            "partials/award_ask_answer.html",
+            state=state,
+            m=result,
+            idx=len(state["chat"]) - 1,
+        )
+    finally:
+        ask_routes._release_ask(rfx_id)
+
+
+@router.post("/rfx/{rfx_id}/award/lock", response_class=HTMLResponse)
+async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
+    """One-click lock: optional save-rec → complete freeze or auto-partial."""
+    from core import award_ask
+
+    state = load_or_404(rfx_id)
+    award_url = f"/rfx/{rfx_id}/award#lock-send"
+
+    def _after():
+        if request.headers.get("HX-Request"):
+            return hx_redirect(f"/rfx/{rfx_id}/award")
+        return RedirectResponse(award_url, status_code=303)
+
+    try:
+        out = award_ask.lock_award(state, rationale=rationale or None)
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+        storage.save_state(rfx_id, state)
+        return _after()
+
+    pack = out["pack"]
+    mode_label = out.get("mode") or pack.get("freeze_mode") or "complete"
+    extra = " Recommendation saved." if out.get("saved_recommendation") else ""
+    award_actions.push_flash(
+        state,
+        f"Award locked successfully ({mode_label}). Snapshot {pack.get('calculation_snapshot_id')}.{extra} "
+        "Next: send award & regret emails below.",
+        level="success",
+        cta_href=award_url,
+        cta_label="Continue: send emails",
+    )
+    storage.save_state(rfx_id, state)
+    return _after()
 
 
 @router.post("/rfx/{rfx_id}/award/send-notices", response_class=HTMLResponse)

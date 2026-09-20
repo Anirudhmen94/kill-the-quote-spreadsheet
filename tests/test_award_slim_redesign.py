@@ -1,4 +1,4 @@
-"""Slim Award redesign: vendor packs, why-reasons, no filter/blockers chrome."""
+"""Simpler Award redesign: Ask card, Who wins, Lock & send."""
 from __future__ import annotations
 
 import sys
@@ -33,16 +33,13 @@ def test_line_why_reason_deterministic():
         "Lowest usable INR/pc among Pass vendors · "
         "runner-up Sri Balaji Packaging +5.2% · gate Pass"
     )
-    # Sole usable quote
     sole = award_packs.line_why_reason(
         {"runner_up": None, "gap_pct": None}, gate_grade="Pass"
     )
     assert "sole usable quote" in sole
     assert "gate Pass" in sole
-    # Em-dash runner-up treated as missing
     dash = award_packs.line_why_reason({"runner_up": "—", "gap_pct": 1.0}, gate_grade="Pass")
     assert "sole usable quote" in dash
-    # Gap formatting strips trailing zeros
     assert award_packs.format_gap_pct(10.0) == "+10%"
     assert award_packs.format_gap_pct(5.2) == "+5.2%"
     assert award_packs.format_gap_pct(None) is None
@@ -52,13 +49,15 @@ def test_vendor_award_packs_group_by_winner():
     st = demo_ops.build_golden_seed()
     live = snapshots.live_award_calculation(st)
     packs = award_packs.vendor_award_packs(
-        live["split"], cmp=live["cmp"], gates=live["gates"], total_extended_inr=live["total_extended_inr"]
+        live["split"],
+        cmp=live["cmp"],
+        gates=live["gates"],
+        total_extended_inr=live["total_extended_inr"],
     )
     assert packs, "expected at least one winning vendor pack"
     names = [p["vendor"] for p in packs]
     assert "Kraftline Industries" in names
     assert "Sri Balaji Packaging" in names
-    # Uncovered never mixed into packs
     uncovered_nos = set(live["uncovered_lines"] or [])
     for p in packs:
         assert p["lines_won"] == len(p["lines"])
@@ -69,57 +68,41 @@ def test_vendor_award_packs_group_by_winner():
             assert ln["why_reason"]
             assert "Lowest usable INR/pc" in ln["why_reason"]
             assert "gate Pass" in ln["why_reason"]
-    # Share percents roughly sum near 100
     assert abs(sum(p["share_pct"] for p in packs) - 100) < 1.5
-    # Uncovered block separate
     uncovered = award_packs.uncovered_line_rows(live["split"])
     assert any(u["line_no"] == 30 for u in uncovered)
 
 
-def test_award_page_slim_layout_no_old_chrome():
+def test_award_page_simpler_layout_ask_lock_send():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
     html = r.text
 
-    # Three steps present
-    assert "Step 1 · Recommendation" in html
-    assert "Step 2 · Award by vendor" in html
-    assert "Step 3 · Lock" in html
+    assert "Ask before you lock" in html
+    assert 'data-testid="award-ask-card"' in html
+    assert 'data-testid="award-ask-premade-best_split"' in html
+    assert 'data-testid="award-ask-premade-who_to_drop"' in html
+    assert 'data-testid="award-ask-premade-biggest_risks"' in html
+    assert 'data-testid="award-ask-textarea"' in html
 
-    # Strategy + trust line
-    assert "Quality-gated cheapest per line" in html
-    assert "Vendor data v" in html
-
-    # Vendor packs with why
+    assert "Who wins" in html
     assert "Kraftline Industries" in html
     assert "Lowest usable INR/pc among Pass vendors" in html
-
-    # Uncovered separate
     assert "Uncovered lines" in html
 
-    # No Award filter bar / URL sync keys
-    assert 'id="award-filters"' not in html
-    assert "data-award-filter-item" not in html
-    assert "awcov" not in html
-    assert "awblock" not in html
-
-    # Old aside sections gone
-    assert "Data quality" not in html
-    assert "Buyer review log" not in html
-    # Blockers list heading (aside) gone — freeze advanced may still mention blockers
-    assert ">Blockers" not in html and "Blockers (" not in html
-
-    # Crowded header primaries gone
-    assert "AI call log" not in html.split("Step 3")[0]  # not in header / steps 1–2
-    assert "Export award workbook" not in html  # renamed / demoted
-    assert "Freeze this award" in html
+    assert "Lock award" in html
+    assert 'data-testid="award-lock-btn"' in html
     assert "Send award" in html
-    assert "Preview notices" in html
-    assert "Advanced…" in html or "Advanced..." in html
+    assert 'data-testid="award-send-btn"' in html
 
-    # Optional auditor table
-    assert "All lines table" in html
+    assert "Ready to freeze?" not in html
+    assert "Advanced…" not in html and "Advanced..." not in html
+    assert "Preview notices" not in html
+    assert "Step 1 · Recommendation" not in html
+    assert 'id="award-filters"' not in html
+    assert "Data quality" not in html
+    assert ">Blockers" not in html and "Blockers (" not in html
 
 
 def test_notice_preview_lists_winner_lines():

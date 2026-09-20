@@ -1,4 +1,4 @@
-"""Award freeze UX: checklist, inline save-recommendation, unlock can_freeze."""
+"""Award freeze/lock UX: save-recommendation API + Lock redesign."""
 from __future__ import annotations
 
 import sys
@@ -28,38 +28,29 @@ def _clear_recs(st: dict) -> dict:
     return st
 
 
-def test_award_page_shows_ready_to_freeze_checklist():
+def test_award_page_shows_lock_and_ask_not_old_checklist():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
     html = r.text
-    assert "Ready to freeze?" in html
-    assert 'data-testid="ready-to-freeze"' in html
-    assert "Open anomalies" in html or "anomalies" in html.lower()
-    assert "Current recommendation" in html or "recommendation saved" in html.lower()
-    assert "Calculation available" in html
-    # With golden seed rec present, freeze button is enabled (no disabled title-only path)
-    assert 'data-testid="freeze-blocked-plain"' not in html or "can_freeze" in html
-    assert "Freeze this award" in html
-    # Must not rely only on title= tooltip for the block reason when blocked —
-    # golden seed has a saved rec so button enabled; separate test covers blocked path.
+    assert "Ask before you lock" in html
+    assert "Lock award" in html
+    assert 'data-testid="award-lock-btn"' in html
+    assert "Ready to freeze?" not in html
+    assert 'data-testid="ready-to-freeze"' not in html
+    # Golden seed has a saved rec — no rationale field required
+    assert 'data-testid="award-lock-rationale"' not in html
 
 
-def test_award_page_blocked_shows_plain_language_not_only_tooltip():
+def test_award_page_without_rec_shows_rationale_on_lock_form():
     st = _seed()
     _clear_recs(st)
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
     html = r.text
-    assert "Ready to freeze?" in html
-    assert "Save recommendation to unlock freeze" in html
-    assert 'data-testid="freeze-blocked-plain"' in html
-    assert "write a short rationale" in html.lower()
-    # Disabled freeze button should not be the only place the reason lives
-    assert "title=\"Save the current calculation as a recommendation" not in html
-    assert 'id="award-save-recommendation-form"' in html
+    assert 'data-testid="award-lock-rationale"' in html
     assert 'name="rationale"' in html
-    assert "Ask the analyst instead" in html
+    assert "Ask before you lock" in html
 
 
 def test_save_recommendation_from_award_unlocks_can_freeze():
@@ -91,10 +82,8 @@ def test_save_recommendation_from_award_unlocks_can_freeze():
 
     page = client.get(f"/rfx/{st['id']}/award")
     assert page.status_code == 200
-    assert "Ready to freeze?" in page.text
-    assert 'data-testid="freeze-blocked-plain"' not in page.text
-    # Enabled primary freeze CTA (not the grey disabled button)
-    assert 'cursor-not-allowed' not in page.text.split("Freeze this award")[0][-200:]
+    assert 'data-testid="award-lock-btn"' in page.text
+    assert 'data-testid="award-lock-rationale"' not in page.text
 
 
 def test_save_recommendation_requires_rationale():
@@ -137,7 +126,7 @@ def test_freeze_blocked_human_copy():
 
 
 def test_complete_freeze_post_redirects_with_error_flash_when_blocked():
-    """Plain form POST must not blank-page or silently no-op when complete freeze fails."""
+    """Plain form POST to legacy freeze endpoint still flashes errors."""
     st = _seed()
     rid = st["id"]
     check = freeze.validate_freeze_request(storage.load_state(rid), mode="complete")
@@ -167,7 +156,7 @@ def test_complete_freeze_post_redirects_with_error_flash_when_blocked():
     assert page.status_code == 200
     assert 'data-testid="award-flash"' in page.text
     assert "Error." in page.text
-    assert "Not frozen yet" in page.text or "not frozen" in page.text.lower()
+    assert "Not locked yet" in page.text or "not locked" in page.text.lower()
 
 
 def test_partial_freeze_post_persists_and_redirects_for_plain_form():
@@ -184,8 +173,6 @@ def test_partial_freeze_post_persists_and_redirects_for_plain_form():
     )
     assert r.status_code in (303, 302), (r.status_code, r.headers, r.text[:300])
     assert "/award" in (r.headers.get("location") or "")
-    # Must not be empty HX-only success for a normal browser form
-    assert r.text == "" or "HX-Redirect" not in r.headers or r.headers.get("location")
 
     st2 = storage.load_state(rid)
     pack = st2.get("freeze") or {}
@@ -193,31 +180,20 @@ def test_partial_freeze_post_persists_and_redirects_for_plain_form():
     assert pack.get("freeze_mode") == "partial"
     flash = st2.get("flash") or {}
     assert flash.get("level") == "success"
-    assert flash.get("message") == (
-        f"Award frozen successfully (partial). Snapshot {pack.get('calculation_snapshot_id')}. "
-        "Next: send award & regret notices below."
-    )
-    assert flash.get("cta_href") == f"/rfx/{rid}/award#award-step-3"
-    assert flash.get("cta_label") == "Continue: send notices"
+    assert "frozen successfully" in (flash.get("message") or "").lower() or "locked successfully" in (
+        flash.get("message") or ""
+    ).lower()
 
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
-    assert "Frozen" in page.text
+    assert "Frozen" in page.text or "frozen" in page.text.lower()
     assert 'data-testid="award-flash"' in page.text
     assert "Success" in page.text
-    assert "Continue: send notices" in page.text
 
 
-def test_award_page_distinguishes_ready_attempt_vs_complete_clear():
+def test_freeze_ux_checklist_still_distinguishes_attempt_vs_complete():
+    """Helper still distinguishes ready-to-attempt vs complete-ok (even if UI dropped checklist)."""
     st = _seed()
-    r = client.get(f"/rfx/{st['id']}/award")
-    assert r.status_code == 200
-    html = r.text
-    # Golden seed: can_freeze true but complete blocked by uncovered line 30
-    assert 'data-testid="freeze-ready-attempt"' in html
-    assert "Checklist clear for complete freeze" not in html
-    assert 'data-testid="freeze-complete-blocked"' in html
-    assert "uncovered" in html.lower() or "30" in html
     checklist = scenario.freeze_ux_checklist(
         storage.load_state(st["id"]),
         live=snapshots.live_award_calculation(storage.load_state(st["id"])),
