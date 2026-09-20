@@ -201,6 +201,7 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
             "rates_to_inr": {"INR": 1.0, "USD": 83.50, "EUR": 91.20, "GBP": 106.40},
         },
         "reviews": [],
+        "exceptions": [],
         "chat": [],
         "recommendation": None,
         "recommendations": [],

@@ -11,16 +11,39 @@
     <a href="/rfx/{{ state.id }}/ai-log" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">AI call log ({{ state.ai_log|length }})</a>
     <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
     <a href="/rfx/{{ state.id }}/memo.md" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Memo (.md)</a>
-    <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Export award workbook</a>
+    <form method="post" action="/rfx/{{ state.id }}/award/export-notify" class="inline">
+      <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Export award workbook</button>
+    </form>
     {% if freeze_pack %}
-    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-emerald-600 text-emerald-800 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100">Download freeze pack (.zip)</a>
+    <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
+      <button type="submit" class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100">Email award / regret notices</button>
+    </form>
+    <a href="/rfx/{{ state.id }}/award/freeze.zip" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50">Download freeze pack (.zip)</a>
     {% endif %}
   </div>
 </div>
 
+
+{% if flash and flash.message %}
+<div class="mt-4 rounded-lg border px-3 py-2 text-sm
+  {% if flash.level == 'error' %}border-rose-300 bg-rose-50 text-rose-950
+  {% else %}border-emerald-300 bg-emerald-50 text-emerald-950{% endif %}">
+  <strong>{% if flash.level == 'error' %}Error.{% else %}Done.{% endif %}</strong> {{ flash.message }}
+  <a href="/rfx/{{ state.id }}/email#outbox" class="underline ml-2">View Outbox</a>
+</div>
+{% endif %}
+
 {% if exclusion_summary %}
 <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
   <strong>Same exclusions as Compare</strong> · {{ exclusion_summary.headline }}
+</div>
+{% endif %}
+
+{% if has_blocking_exceptions %}
+<div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2">
+  <strong>Resolve exceptions first.</strong>
+  Open or pending-approval exceptions still block a clean quality-gated award.
+  <a href="/rfx/{{ state.id }}/exceptions" class="underline ml-1">Open Exceptions</a>
 </div>
 {% endif %}
 

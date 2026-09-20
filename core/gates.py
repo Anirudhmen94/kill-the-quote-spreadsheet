@@ -51,13 +51,37 @@ def _reason(grade: str, q: dict) -> str:
 def evaluate_gates(state: dict) -> dict:
     """Matrix of gate results for every vendor. Shared by Compare + Award."""
     rfx = state["rfx"]
+    # Late import avoids circular dependency (exceptions → awardability → gates).
+    from .exceptions import cleared_knockouts
+
+    cleared = cleared_knockouts(state)
     rows = []
     for v in state.get("vendors", []):
         gate = evaluate_vendor_gate(rfx, v.get("extraction"))
+        vid = v["vendor_id"]
+        if cleared:
+            gate["knockout_failed"] = [q for q in gate["knockout_failed"] if (vid, q) not in cleared]
+            gate["knockout_open"] = [q for q in gate["knockout_open"] if (vid, q) not in cleared]
+            # Re-grade after exception clears
+            if gate["knockout_failed"]:
+                gate["grade"] = "Fail"
+                gate["overall"] = "failed"
+                gate["eligible_for_quality_gated_award"] = False
+                gate["reason"] = _reason("Fail", gate)
+            elif gate["knockout_open"]:
+                gate["grade"] = "Partial"
+                gate["overall"] = "incomplete"
+                gate["eligible_for_quality_gated_award"] = False
+                gate["reason"] = _reason("Partial", gate)
+            elif gate["overall"] != "not_extracted":
+                gate["grade"] = "Pass"
+                gate["overall"] = "cleared"
+                gate["eligible_for_quality_gated_award"] = True
+                gate["reason"] = "All knockout questions cleared (including buyer/manager exception overrides)."
         rows.append(
             {
-                "vendor_id": v["vendor_id"],
-                "name": v.get("name", v["vendor_id"]),
+                "vendor_id": vid,
+                "name": v.get("name", vid),
                 "status": v.get("status"),
                 **gate,
             }

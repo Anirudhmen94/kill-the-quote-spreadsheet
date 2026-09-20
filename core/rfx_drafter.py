@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import llm, rfx_cache
+from . import draft_gates, llm, rfx_cache
 from .models import RFxDraftAI
 
 SYSTEM = """You are a senior category manager for packaging procurement in India, drafting an RFx
@@ -54,11 +54,20 @@ def _enrich(data: dict) -> dict:
     return data
 
 
-def draft_rfx(brief: str, log: list | None = None) -> dict:
-    # Instant path: seeded Chakan demo brief → canned complete RFx (no LLM).
+def draft_rfx(brief: str, log: list | None = None, gates: list[dict] | None = None) -> dict:
+    """Draft an RFx. Optional `gates` drive the questionnaire (and the prompt).
+
+    Cached EXAMPLE_BRIEF path keeps canned lines/terms and rebuilds the
+    questionnaire from `gates` so gate customization stays instant.
+    """
+    gates = gates if gates is not None else draft_gates.default_gates()
+
+    # Instant path: seeded Chakan demo brief → canned lines/terms (no LLM),
+    # then questionnaire always rebuilt from selected gates.
     if rfx_cache.is_example_brief(brief):
         started = time.time()
         data = rfx_cache.enrich_cached_rfx(rfx_cache.cached_chakan_rfx())
+        data = draft_gates.apply_gates_to_rfx(data, gates)
         if log is not None:
             log.append(
                 {
@@ -70,12 +79,14 @@ def draft_rfx(brief: str, log: list | None = None) -> dict:
                     "latency_s": round(time.time() - started, 2),
                     "attempt": 1,
                     "stop_reason": "cache_hit",
+                    "gates_customized": not draft_gates.gates_match_defaults(gates),
                 }
             )
         return data
 
     content = (
         "Buyer brief (plain language):\n\n" + brief.strip() + "\n\n"
+        + draft_gates.gates_prompt_block(gates) + "\n\n"
         "Draft the complete RFx now. Remember: exactly 30 line items. "
         "Prefer concise descriptions; one successful emit is better than a retry."
     )
@@ -104,7 +115,8 @@ def draft_rfx(brief: str, log: list | None = None) -> dict:
             model=llm.draft_model_name(),
         )
 
-    return _enrich(draft.model_dump(mode="json"))
+    data = _enrich(draft.model_dump(mode="json"))
+    return draft_gates.apply_gates_to_rfx(data, gates)
 
 
 def new_state(brief: str, rfx: dict) -> dict:
@@ -118,6 +130,7 @@ def new_state(brief: str, rfx: dict) -> dict:
         "vendors": [],
         "fx": {"as_of": "2026-09-15", "source": "Buyer treasury reference rate (fixed for this event)", "rates_to_inr": {"INR": 1.0, "USD": 83.50, "EUR": 91.20, "GBP": 106.40, "AED": 22.73, "SGD": 62.10}},
         "reviews": [],
+        "exceptions": [],
         "chat": [],
         "recommendation": None,
         "recommendations": [],

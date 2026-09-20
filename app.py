@@ -11,14 +11,15 @@ load_dotenv()
 from fastapi import FastAPI, Form, HTTPException, Request  # noqa: E402
 from fastapi.responses import HTMLResponse, RedirectResponse, Response  # noqa: E402
 
-from core import demo_ops, ingest, llm, rfx_drafter, snapshots, storage, vendor_sim  # noqa: E402
+from core import demo_ops, draft_gates, ingest, llm, rfx_drafter, snapshots, storage, vendor_sim  # noqa: E402
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render  # noqa: E402
-from routes import ask, compare, inbox  # noqa: E402
+from routes import ask, compare, exceptions, inbox  # noqa: E402
 
 app = FastAPI(title="Kill the Quote Spreadsheet")
 app.include_router(inbox.router)
 app.include_router(compare.router)
 app.include_router(ask.router)
+app.include_router(exceptions.router)
 
 
 @app.exception_handler(Exception)
@@ -50,18 +51,22 @@ def home(request: Request):
                     "extracted": sum(1 for v in st.get("vendors", []) if v.get("status") == "extracted"),
                 }
             )
-    return render(request, "index.html", events=events, example_brief=vendor_sim.EXAMPLE_BRIEF)
+    return render(request, "index.html", events=events, example_brief=vendor_sim.EXAMPLE_BRIEF, default_gates=draft_gates.default_gates())
 
 
 @app.post("/draft", response_class=HTMLResponse)
-def draft(request: Request, brief: str = Form(...)):
+async def draft(request: Request):
+    form = await request.form()
+    brief = str(form.get("brief") or "")
     if len(brief.strip()) < 20:
         return error_fragment("Please describe the requirement in at least a sentence or two.", 400)
+    gates = draft_gates.parse_gates_from_form(form)
     try:
         log: list = []
-        rfx = rfx_drafter.draft_rfx(brief, log=log)
+        rfx = rfx_drafter.draft_rfx(brief, log=log, gates=gates)
         state = rfx_drafter.new_state(brief, rfx)
         state["ai_log"] = log
+        state["quality_gates"] = gates
         storage.save_state(state["id"], state)
     except llm.AINotConfigured as e:
         return error_fragment(str(e), 400)

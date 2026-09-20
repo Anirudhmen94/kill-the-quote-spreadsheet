@@ -61,6 +61,21 @@
       </dl>
     </div>
 
+    
+    {% if rfx.quality_gates %}
+    <div class="rounded-lg border border-slate-200 bg-white mb-4">
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Quality gates that drove this questionnaire</div>
+      <div class="px-4 py-3 flex flex-wrap gap-1.5">
+        {% for g in rfx.quality_gates if g.enabled %}
+        <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs
+          {% if g.knockout %}bg-amber-50 text-amber-900 border-amber-200{% else %}bg-slate-50 text-slate-700 border-slate-200{% endif %}">
+          {{ g.label }}{% if g.knockout %}<span class="font-medium">· knockout</span>{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <div class="rounded-lg border border-slate-200 bg-white">
       <div class="px-4 py-3 border-b border-slate-200 font-medium">Quality questionnaire <span class="text-slate-400 font-normal">({{ rfx.questionnaire|length }})</span></div>
       <ol class="px-4 py-3 text-sm space-y-2">

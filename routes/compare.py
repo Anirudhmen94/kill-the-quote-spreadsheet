@@ -6,9 +6,9 @@ import re
 
 import pymupdf
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
 
-from core import awardability, demo_ops, edge_callouts, engine, export, freeze, ingest, snapshots, storage
+from core import award_actions, awardability, demo_ops, edge_callouts, engine, exceptions as exc_mod, export, freeze, ingest, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -193,6 +193,10 @@ def award_page(request: Request, rfx_id: str):
     current_rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
     historical = [r for r in state.get("recommendations", []) if r.get("status") in ("stale", "superseded") or r.get("legacy")]
     pack = freeze.current_freeze(state)
+    flash = award_actions.pop_flash(state)
+    if flash is not None:
+        # flash consumed — persist cleared flash
+        storage.save_state(rfx_id, state)
     return render(
         request,
         "award.html",
@@ -208,9 +212,32 @@ def award_page(request: Request, rfx_id: str):
         freeze_pack=pack,
         callouts=edge_callouts.edge_callouts(cmp) if cmp.get("vendors") else [],
         active="award",
+        has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
+        flash=flash,
     )
 
 
+
+
+
+@router.post("/rfx/{rfx_id}/award/send-notices", response_class=HTMLResponse)
+def send_award_notices(request: Request, rfx_id: str, vendor_id: str = Form("")):
+    state = load_or_404(rfx_id)
+    try:
+        award_actions.send_award_notices(state, vendor_id=vendor_id or None)
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
+
+
+@router.post("/rfx/{rfx_id}/award/export-notify")
+def export_award_notify(rfx_id: str):
+    """Record stakeholder notification then redirect to the xlsx download."""
+    state = load_or_404(rfx_id)
+    award_actions.record_export_notification(state)
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/export.xlsx?notified=1", status_code=303)
 
 @router.get("/rfx/{rfx_id}/export.xlsx")
 def export_xlsx(rfx_id: str, provisional: bool = False):
