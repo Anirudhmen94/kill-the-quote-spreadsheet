@@ -16,12 +16,12 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 | **Maths in code, prose from the model** | Trust: ₹4cr decisions can’t rest on recalled numbers. | Compare matrix footers · Award packs · Ask answers (tables = engine) |
 | **Quality gates at draft time** | Questionnaire comes from gates + brief; gates drive eligibility. | Home: pick gates → draft · Compare gate badges · Award “Pass vendors” |
 | **Default award = line split** | Assignment VP question: cheapest per line among who cleared quality. | Award **Who wins** packs (not winner-takes-all) |
-| **Compare vs Anomalies split** | Clean verified Pass matrix stays separate from messy exceptions. | `/rfx/<id>/compare` (verified Pass only) · `/rfx/<id>/anomalies` (flags + Override / Send for approval / Deny) |
+| **Compare vs Anomalies split** | Full multi-vendor matrix stays separate from exception workflows. | `/rfx/<id>/compare` (all vendors, all cell statuses) · `/rfx/<id>/anomalies` (flags + Override / Send for approval / Deny) |
 | **Award = Ask → Lock → Send** | Short close path; Ask stays strong after Compare. | `/rfx/<id>/award`: Ask card → packs → **Lock award** → **Send notices** |
 | **Premade Ask = fast cache; free-ask = live Claude** | Demo speed ≠ Email Read-all latency; typed questions stay real. | Award Ask: 3 premade buttons (instant) · textarea (live API) |
 | **Freeze binds a snapshot** | Defensible packet; later re-reads don’t silently rewrite a frozen memo. | Award **Lock** · then Outbox notices / freeze.zip |
 | **Email channel, stub SMTP** | Brief allows fake mail; Outbox is the proof. | `/rfx/<id>/email` Incoming + Outbox · award/regret stubs after Send |
-| **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare verified-cell / vendor filters · Anomalies kind filters (Award: none) |
+| **Search/filter on Email & Compare** | Scale the matrix without cluttering Award. | Email status/file filters · Compare cell-status / gate / vendor filters · Anomalies kind filters (Award: none) |
 
 ---
 
@@ -29,7 +29,7 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 
 1. **Draft** — brief + quality-check prefs → live RFx + auto questionnaire.  
 2. **Email** — simulate messy replies, live parallel extract, clarifications, Outbox.  
-3. **Compare** — verified Pass-only INR/pc matrix, evidence drawer (read/link), Ask drawer, filters.  
+3. **Compare** — full multi-vendor INR/pc matrix (all statuses + gate badges), evidence drawer (read/link to Anomalies), Ask drawer, filters.  
 3b. **Anomalies** — flagged cells, gate Fail/Partial, coverage gaps, format/pricing callouts; Override / Send for approval / Deny.  
 4. **Award** — Ask-before-you-lock (premade + live), per-vendor why packs, one-click Lock (complete only; partial via explicit Freeze partial…), Send stub notices, success banners.  
 5. **Trust chrome** — cell states, vendor data version / snapshots, recommendation before lock, historical freeze when data moves.

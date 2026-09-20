@@ -73,7 +73,7 @@
   {% if exception_item and exception_item.status in ('open', 'rejected', 'pending_approval') %}
   <section class="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2 text-xs">
     <h3 class="font-medium text-sm text-amber-950">Flagged on Anomalies</h3>
-    <p class="text-amber-900">Override, deny, and approval actions live on the Anomalies tab — Compare stays verified-only.</p>
+    <p class="text-amber-900">Override, deny, and approval actions live on the Anomalies tab — not in this drawer.</p>
     {% if exception_item.reason %}<p class="text-amber-900"><strong>Why:</strong> {{ exception_item.reason }}</p>{% endif %}
     <a href="/rfx/{{ state.id }}/anomalies" class="inline-block rounded bg-slate-900 text-white px-3 py-1.5 hover:bg-slate-800">Open Anomalies</a>
   </section>

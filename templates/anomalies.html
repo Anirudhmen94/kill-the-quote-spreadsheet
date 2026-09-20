@@ -4,13 +4,12 @@
 {% block content %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
-    <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">Anomalies {{ tip("Messy exceptions that keep Compare clean: flagged cells, gate Fail/Partial, coverage gaps, format and pricing-method issues. Override, send for approval, or deny.", aria="Anomalies help", width="w-64") }}</h1>
+    <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">Anomalies {{ tip("Exception workflows for flagged cells, gate Fail/Partial, coverage gaps, and format/pricing issues. Override, send for approval, or deny — Compare keeps the full matrix.", aria="Anomalies help", width="w-64") }}</h1>
     <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
     <p class="mt-1 text-sm text-slate-600">
-      Everything that is not a verified Pass price — needs review, unresolved, conversion issues,
-      missing quotes that matter, gate Fail/Partial, coverage gaps, and format / pricing-method callouts.
+      Flagged prices, gate Fail/Partial, coverage gaps, and format / pricing-method callouts.
       Override (apply into the decision), send for approval, or deny (reason required).
-      Verified Pass comparison stays on
+      The full multi-vendor price matrix stays on
       <a href="/rfx/{{ state.id }}/compare" class="underline font-medium">Compare</a>.
     </p>
   </div>

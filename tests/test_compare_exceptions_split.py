@@ -1,4 +1,4 @@
-"""Compare is verified Pass-only; Anomalies is a separate tab with actions + redirects."""
+"""Compare shows full multi-vendor matrix; Anomalies is a separate tab with actions + redirects."""
 from __future__ import annotations
 
 import re
@@ -64,21 +64,23 @@ def test_exceptions_redirects_to_anomalies():
     assert "/anomalies" in loc2
 
 
-def test_compare_has_no_anomalies_panel_and_only_pass_vendors():
+def test_compare_has_full_matrix_without_anomaly_actions():
     st = _seed()
     page = client.get(f"/rfx/{st['id']}/compare")
     assert page.status_code == 200
+    # Anomalies panel / actions stay off Compare
     assert 'id="anomalies"' not in page.text
     assert "anomalies-chip" not in page.text
     assert "/override" not in page.text
     assert "Send for approval" not in page.text
     assert "/deny" not in page.text
-    # Pass vendors appear; non-Pass names from golden seed should not be column headers
-    # Sri Balaji + Kraftline are Pass; Meghna is Fail
+    # Full multi-vendor matrix (Pass + Fail/Partial)
     assert "Sri Balaji" in page.text or "Balaji" in page.text
-    # Matrix should not advertise needs_review legend
-    assert "needs review" not in page.text.lower() or "Anomalies" in page.text
-    # Verified-only copy
+    assert "Meghna" in page.text  # Fail vendor still a column
+    assert "needs review" in page.text.lower()
+    assert "unresolved" in page.text.lower()
+    assert "Excluded from every total" in page.text
+    assert "Quality gates" in page.text
     assert "Pass" in page.text
     assert "/rfx/" in page.text and "/anomalies" in page.text
 

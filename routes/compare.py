@@ -46,7 +46,7 @@ def _context_lines(text: str, snippet: str, radius: int = 3) -> list[dict]:
 
 @router.get("/rfx/{rfx_id}/compare", response_class=HTMLResponse)
 def compare_page(request: Request, rfx_id: str):
-    """Clean Compare — verified prices for Pass vendors only. Messy work lives on Anomalies."""
+    """Full multi-vendor comparison matrix. Override / Deny / approval live on Anomalies."""
     state = load_or_404(rfx_id)
     cmp = awardability.enrich_state_comparison(state) if any(v.get("extraction") for v in state["vendors"]) else engine.build_comparison(state)
     counts = snapshots.processing_counts(state)
@@ -67,12 +67,8 @@ def compare_page(request: Request, rfx_id: str):
 
     ready = any(v.get("extraction") for v in state["vendors"])
     gates = cmp.get("gates") or {}
-    pass_ids = set(gates.get("pass_ids") or [])
-    gates_present = bool(pass_ids) or bool((gates.get("summary") or {}).get("total"))
-    if gates_present:
-        matrix_vendors = [v for v in cmp["vendors"] if v.get("gate") == "Pass" or v["vendor_id"] in pass_ids]
-    else:
-        matrix_vendors = list(cmp["vendors"])
+    # All extracted vendors in the matrix (not Pass-only); flagged work stays on Anomalies.
+    matrix_vendors = list(cmp["vendors"])
     open_anomaly_count = exc_mod.counts(state).get("open", 0)
     chart_bundle = charts.build_chart_bundle(state) if ready else {"available": False}
     if chart_bundle.get("available"):
@@ -90,9 +86,7 @@ def compare_page(request: Request, rfx_id: str):
         compare_premades=compare_ask.COMPARE_PREMADES,
         ready=ready,
         matrix_vendors=matrix_vendors,
-        gates_present=gates_present,
         open_anomaly_count=open_anomaly_count,
-        verified_statuses=sorted(engine.USABLE),
         charts=chart_bundle,
         audit_strip=audit_strip,
     )

@@ -85,8 +85,10 @@ def test_compare_matrix_filter_bar_and_data_attrs():
     assert 'value="ok"' in r.text
     assert 'value="converted"' in r.text
     assert 'value="reviewed"' in r.text
-    assert 'value="flagged"' not in r.text
-    assert 'data-filter-control="gate"' not in r.text
+    assert 'value="needs_review"' in r.text
+    assert 'value="flagged"' in r.text
+    assert 'data-filter-control="gate"' in r.text
+    assert 'value="Pass"' in r.text
     assert 'data-filter-multi="vendors"' in r.text
     assert "KqFilterBar" in r.text or "data-filter-bar" in r.text
 
