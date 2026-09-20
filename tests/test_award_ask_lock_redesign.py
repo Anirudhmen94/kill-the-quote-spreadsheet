@@ -74,7 +74,7 @@ def test_send_success_after_checklist():
     rid = st["id"]
     client.get(f"/rfx/{rid}/award")
     st = storage.load_state(rid)
-    award_draft.update_checklist(st, {c["id"]: True for c in award_draft.CHECKLIST_ITEMS})
+    award_draft.update_acknowledgements(st, {c["id"]: True for c in award_draft.ACKNOWLEDGEMENT_ITEMS})
     storage.save_state(rid, st)
     r = client.post(f"/rfx/{rid}/award/send-notices", follow_redirects=False)
     assert r.status_code in (302, 303)

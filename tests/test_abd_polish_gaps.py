@@ -122,7 +122,7 @@ def test_discount_confirm_route_persists_actor_and_snapshot(monkeypatch, tmp_pat
 
 
 def test_award_page_ask_assign_send_no_lock():
-    """Award page: Ask + top-2 + assign + checks + send; no freeze/lock UX."""
+    """Award page: Ask + top-2 + assign + acknowledgements + send; no freeze/lock UX."""
     st = _seed()
     st["recommendations"] = []
     st["recommendation"] = None
@@ -135,6 +135,8 @@ def test_award_page_ask_assign_send_no_lock():
     assert "Suggest top 2" in html
     assert "Assign by line" in html
     assert "Send award drafts" in html
+    assert "Acknowledgements" in html
+    assert "Rule checks" not in html
     assert "Lock award" not in html
     assert 'data-testid="award-lock-rationale"' not in html
     assert "Ready to freeze?" not in html

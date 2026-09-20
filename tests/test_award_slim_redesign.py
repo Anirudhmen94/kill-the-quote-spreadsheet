@@ -1,4 +1,4 @@
-"""Award redesign: Ask card, top-2, assign, checks, send (no freeze/lock UX)."""
+"""Award redesign: Ask card, top-2, assign, acknowledgements, send (no freeze/lock UX)."""
 from __future__ import annotations
 
 import sys

@@ -253,6 +253,7 @@ def test_notices_blocked_for_requires_review():
             "requires review" in str(e).lower()
             or "disabled" in str(e).lower()
             or "checklist" in str(e).lower()
+            or "acknowledgement" in str(e).lower()
             or "assign" in str(e).lower()
         )
 

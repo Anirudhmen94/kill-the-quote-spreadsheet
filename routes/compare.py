@@ -187,7 +187,7 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 
 @router.get("/rfx/{rfx_id}/award", response_class=HTMLResponse)
 def award_page(request: Request, rfx_id: str):
-    """Buyer Award workflow: Ask → top-2 → assign by line → checks → Send → Export."""
+    """Buyer Award workflow: Ask → top-2 → assign by line → acknowledgements → Send → Export."""
     from core import award_ask, award_draft, charts
 
     state = load_or_404(rfx_id)
@@ -213,7 +213,8 @@ def award_page(request: Request, rfx_id: str):
         shortlist = {**shortlist, "vendors": ordered, "focused_vendor_id": vid}
     assignment_rows = award_draft.line_assignment_rows(state, live if live.get("available") else None) if live.get("available") else []
     totals = award_draft.draft_totals(state, live if live.get("available") else None) if live.get("available") else {"total_extended_inr": 0, "covered_line_count": 0, "uncovered_lines": []}
-    checklist_ready = award_draft.checklist_complete(draft) if draft else False
+    acknowledgements_ready = award_draft.acknowledgements_complete(draft) if draft else False
+    draft_acks = award_draft.draft_acknowledgements(draft) if draft else {}
     audit_strip = charts.audit_trust_strip(state)
 
     return render(
@@ -228,8 +229,9 @@ def award_page(request: Request, rfx_id: str):
         shortlist=shortlist,
         assignment_rows=assignment_rows,
         draft_totals=totals,
-        checklist_items=award_draft.CHECKLIST_ITEMS,
-        checklist_ready=checklist_ready,
+        acknowledgement_items=award_draft.ACKNOWLEDGEMENT_ITEMS,
+        acknowledgements_ready=acknowledgements_ready,
+        draft_acks=draft_acks,
         audit_strip=audit_strip,
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
         award_from_ask=from_ask,
@@ -344,7 +346,7 @@ async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
     state = load_or_404(rfx_id)
     award_actions.push_flash(
         state,
-        "Lock award was removed. Assign lines, tick the rule checks, then Send award drafts.",
+        "Lock award was removed. Assign lines, complete acknowledgements, then Send award drafts.",
         level="error",
     )
     storage.save_state(rfx_id, state)
@@ -354,22 +356,23 @@ async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
 
 
 def _parse_draft_form(form) -> tuple[dict[str, str], dict[str, bool]]:
-    """Parse line_* selects and check_* boxes from the Award draft form."""
+    """Parse line_* selects and ack_* (legacy check_*) boxes from the Award draft form."""
     from core import award_draft as _ad
 
     allocation: dict[str, str] = {}
-    checklist = {c["id"]: False for c in _ad.CHECKLIST_ITEMS}
+    acknowledgements = {c["id"]: False for c in _ad.ACKNOWLEDGEMENT_ITEMS}
     for key in form.keys():
         if key.startswith("line_"):
             line_key = key[len("line_") :]
             val = form.get(key)
             if val:
                 allocation[str(line_key)] = str(val)
-        elif key.startswith("check_"):
-            cid = key[len("check_") :]
-            if cid in checklist:
-                checklist[cid] = str(form.get(key) or "").lower() in ("true", "on", "1", "yes")
-    return allocation, checklist
+        elif key.startswith("ack_") or key.startswith("check_"):
+            prefix = "ack_" if key.startswith("ack_") else "check_"
+            cid = key[len(prefix) :]
+            if cid in acknowledgements:
+                acknowledgements[cid] = str(form.get(key) or "").lower() in ("true", "on", "1", "yes")
+    return allocation, acknowledgements
 
 
 @router.post("/rfx/{rfx_id}/award/save-draft", response_class=HTMLResponse)
@@ -378,10 +381,10 @@ async def award_save_draft(request: Request, rfx_id: str):
 
     state = load_or_404(rfx_id)
     form = await request.form()
-    allocation, checklist = _parse_draft_form(form)
+    allocation, acknowledgements = _parse_draft_form(form)
     try:
         award_draft.update_allocation(state, allocation)
-        award_draft.update_checklist(state, checklist)
+        award_draft.update_acknowledgements(state, acknowledgements)
         award_actions.push_flash(state, "Award draft assignments saved.")
     except ValueError as e:
         award_actions.push_flash(state, str(e), level="error")
@@ -443,7 +446,7 @@ async def award_apply_split(request: Request, rfx_id: str, chat_idx: int = Form(
         award_draft.update_allocation(state, {str(k): str(v) for k, v in allocation.items()})
         award_actions.push_flash(
             state,
-            "Applied suggested split to the award draft. Tick the rule checks, then Send.",
+            "Applied suggested split to the award draft. Complete acknowledgements, then Send.",
             cta_href=f"/rfx/{rfx_id}/award#assign-by-line",
             cta_label="Review assignments",
         )
@@ -460,7 +463,7 @@ async def award_apply_split(request: Request, rfx_id: str, chat_idx: int = Form(
 async def award_send_to_vendor(request: Request, rfx_id: str):
     """From Ask: preload Award with suggested vendor + reason, focus Send section.
 
-    Does not send notices yet — buyer reviews checks then uses Send award drafts.
+    Does not send notices yet — buyer completes acknowledgements then uses Send award drafts.
     """
     from core import award_draft
 
@@ -519,7 +522,7 @@ async def award_send_to_vendor(request: Request, rfx_id: str):
             n_vendors = len({str(v) for v in allocation.values()})
             award_actions.push_flash(
                 state,
-                f"Preloaded suggested split ({n_vendors} vendor(s)). Review checks, then Send award drafts.",
+                f"Preloaded suggested split ({n_vendors} vendor(s)). Complete acknowledgements, then Send award drafts.",
                 cta_href=dest,
                 cta_label="Review & send",
             )
@@ -539,7 +542,7 @@ async def award_send_to_vendor(request: Request, rfx_id: str):
             award_actions.push_flash(
                 state,
                 f"Preloaded {name} on {n} line(s) from the analyst suggestion. "
-                f"Review checks, then Send award drafts.",
+                f"Complete acknowledgements, then Send award drafts.",
                 cta_href=dest,
                 cta_label="Review & send",
             )
@@ -558,12 +561,12 @@ async def send_award_notices(request: Request, rfx_id: str, vendor_id: str = For
 
     state = load_or_404(rfx_id)
     form = await request.form()
-    # Prefer form allocation/checklist when posted from the draft form
+    # Prefer form allocation/acknowledgements when posted from the draft form
     if any(str(k).startswith("line_") for k in form.keys()):
-        allocation, checklist = _parse_draft_form(form)
+        allocation, acknowledgements = _parse_draft_form(form)
         try:
             award_draft.update_allocation(state, allocation)
-            award_draft.update_checklist(state, checklist)
+            award_draft.update_acknowledgements(state, acknowledgements)
         except ValueError as e:
             award_actions.push_flash(state, str(e), level="error")
             storage.save_state(rfx_id, state)
@@ -573,7 +576,7 @@ async def send_award_notices(request: Request, rfx_id: str, vendor_id: str = For
     except ValueError as e:
         award_actions.push_flash(state, str(e), level="error")
         storage.save_state(rfx_id, state)
-        return RedirectResponse(f"/rfx/{rfx_id}/award#rule-checks", status_code=303)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#acknowledgements", status_code=303)
     storage.save_state(rfx_id, state)
     return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
 

@@ -8,9 +8,9 @@
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
       Award
-      {{ tip("Ask → Send award to vendor preloads assignment · shortlist · assign · checks · send drafts (manager notified).", aria="Award help", width="w-72") }}
+      {{ tip("Ask → Send award to vendor preloads assignment · shortlist · assign · acknowledgements · send drafts (manager notified).", aria="Award help", width="w-72") }}
     </h1>
-    <p class="mt-1 text-sm text-slate-600">Ask the analyst · Send award to vendor · shortlist · assign · check · send drafts.</p>
+    <p class="mt-1 text-sm text-slate-600">Ask the analyst · Send award to vendor · shortlist · assign · acknowledgements · send drafts.</p>
     <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
   </div>
 </div>
@@ -116,7 +116,7 @@
     <div class="rounded-xl border-2 border-slate-900/10 bg-gradient-to-b from-slate-50 to-white shadow-sm overflow-hidden" data-testid="award-ask-card">
       <div class="px-5 py-4 border-b border-slate-200">
         <h2 id="award-ask-heading" class="text-lg font-semibold text-slate-900">Ask the analyst</h2>
-        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant; free-ask calls the live analyst. Use <strong>Send award to vendor</strong> to preload Award with that vendor and reason, then tick checks and Send. <strong>Apply this vendor</strong> is a lighter assignment-only action.</p>
+        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant; free-ask calls the live analyst. Use <strong>Send award to vendor</strong> to preload Award with that vendor and reason, then complete acknowledgements and Send. <strong>Apply this vendor</strong> is a lighter assignment-only action.</p>
       </div>
 
       <div class="px-5 py-4 space-y-4">
@@ -268,18 +268,21 @@
         <button type="submit" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50" data-testid="award-save-draft-btn">Save assignments</button>
       </div>
 
-      {# ========== 4. Rule checkmarks ========== #}
-      <div class="px-4 py-4 border-t border-slate-200 space-y-3" data-testid="award-checklist" id="rule-checks">
-        <div class="font-medium text-slate-900">Rule checks <span class="text-xs font-normal text-slate-500">(required before Send)</span></div>
-        {% for item in checklist_items %}
-        <label class="flex items-start gap-2 text-sm text-slate-800">
-          <input type="checkbox" name="check_{{ item.id }}" value="true"
-            class="mt-0.5 award-check"
-            data-testid="award-check-{{ item.id }}"
-            {% if draft and draft.checklist and draft.checklist[item.id] %}checked{% endif %}
-            onchange="window.__awardUpdateSend && window.__awardUpdateSend()">
-          <span>{{ item.label }}</span>
-        </label>
+      {# ========== 4. Acknowledgements ========== #}
+      <div class="px-4 py-4 border-t border-slate-200 space-y-4" data-testid="award-acknowledgements" id="acknowledgements">
+        <div class="font-medium text-slate-900">Acknowledgements <span class="text-xs font-normal text-slate-500">(required before Send)</span></div>
+        {% for item in acknowledgement_items %}
+        <div class="space-y-1.5" data-testid="award-ack-item-{{ item.id }}">
+          <div class="text-sm text-slate-700">{{ loop.index }}. {{ item.question }}</div>
+          <label class="flex items-start gap-2 text-sm text-slate-800">
+            <input type="checkbox" name="ack_{{ item.id }}" value="true"
+              class="mt-0.5 award-ack"
+              data-testid="award-ack-{{ item.id }}"
+              {% if draft_acks and draft_acks.get(item.id) %}checked{% endif %}
+              onchange="window.__awardUpdateSend && window.__awardUpdateSend()">
+            <span>{{ item.label }}</span>
+          </label>
+        </div>
         {% endfor %}
       </div>
 
@@ -289,7 +292,7 @@
           class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
           data-testid="award-send-btn"
           id="award-send-btn"
-          {% if not draft or not checklist_ready %}disabled{% endif %}>
+          {% if not draft or not acknowledgements_ready %}disabled{% endif %}>
           Send award drafts
         </button>
         <span class="text-xs text-slate-500">Sends award drafts to winners (their lines only) and regret notices to others. No real SMTP.</span>
@@ -299,7 +302,7 @@
     <script>
     (function(){
       function allChecked(){
-        var boxes = document.querySelectorAll('.award-check');
+        var boxes = document.querySelectorAll('.award-ack');
         if (!boxes.length) return false;
         for (var i=0;i<boxes.length;i++){ if (!boxes[i].checked) return false; }
         return true;

@@ -1,4 +1,4 @@
-"""Simple Award draft workflow: top-2 shortlist → line assign → checklist → send.
+"""Simple Award draft workflow: top-2 shortlist → line assign → acknowledgements → send.
 
 Replaces freeze/lock as the primary buyer path on the Award page.
 """
@@ -10,26 +10,33 @@ from typing import Any
 
 from . import engine, snapshots
 
-CHECKLIST_ITEMS: list[dict[str, str]] = [
+ACKNOWLEDGEMENT_ITEMS: list[dict[str, str]] = [
     {
         "id": "quality_gates_reviewed",
-        "label": "Quality gates reviewed for selected vendors",
+        "question": "Have you reviewed quality gates for the selected vendors?",
+        "label": "I acknowledge I have reviewed quality gates for the selected vendors.",
     },
     {
         "id": "pricing_present",
-        "label": "Pricing present on awarded lines",
+        "question": "Confirm pricing is present on all awarded lines?",
+        "label": "I confirm pricing is present on all awarded lines.",
     },
     {
         "id": "anomalies_ack",
-        "label": "No unresolved selected-line anomalies (or acknowledge)",
+        "question": "Do you acknowledge there are no unresolved anomalies on selected lines (or you accept remaining risk)?",
+        "label": "I acknowledge there are no unresolved anomalies on selected lines, or I accept remaining risk.",
     },
     {
         "id": "draft_ready",
-        "label": "Award draft ready to notify vendors",
+        "question": "Confirm you are ready to send award drafts to vendors and regret notices to others?",
+        "label": "I confirm I am ready to send award drafts to vendors and regret notices to others.",
     },
 ]
 
-REQUIRED_CHECK_IDS = [c["id"] for c in CHECKLIST_ITEMS]
+REQUIRED_ACK_IDS = [c["id"] for c in ACKNOWLEDGEMENT_ITEMS]
+# Back-compat aliases for older tests/imports
+CHECKLIST_ITEMS = ACKNOWLEDGEMENT_ITEMS
+REQUIRED_CHECK_IDS = REQUIRED_ACK_IDS
 
 # Extraction / processing statuses that cannot be awarded
 _BLOCKED_VENDOR_STATUSES = frozenset(
@@ -257,12 +264,29 @@ def default_allocation(
     return alloc
 
 
+def empty_acknowledgements() -> dict[str, bool]:
+    return {c["id"]: False for c in ACKNOWLEDGEMENT_ITEMS}
+
+
 def empty_checklist() -> dict[str, bool]:
-    return {c["id"]: False for c in CHECKLIST_ITEMS}
+    """Back-compat alias."""
+    return empty_acknowledgements()
+
+
+def draft_acknowledgements(draft: dict | None) -> dict[str, bool]:
+    """Read acknowledgements from draft; migrate legacy checklist key."""
+    d = draft or {}
+    acks = d.get("acknowledgements")
+    if isinstance(acks, dict):
+        return dict(acks)
+    legacy = d.get("checklist")
+    if isinstance(legacy, dict):
+        return dict(legacy)
+    return empty_acknowledgements()
 
 
 def ensure_award_draft(state: dict, live: dict | None = None) -> dict:
-    """Ensure state['award_draft'] exists with shortlist + allocation + checklist."""
+    """Ensure state['award_draft'] exists with shortlist + allocation + acknowledgements."""
     live = _live(state, live)
     draft = state.get("award_draft")
     if not isinstance(draft, dict):
@@ -295,9 +319,11 @@ def ensure_award_draft(state: dict, live: dict | None = None) -> dict:
                 ],
                 "shortlist_explanation": top["explanation"],
                 "allocation": alloc,
-                "checklist": empty_checklist()
-                if version_changed or not isinstance(draft.get("checklist"), dict)
-                else dict(draft.get("checklist")),
+                "acknowledgements": (
+                    empty_acknowledgements()
+                    if version_changed
+                    else draft_acknowledgements(draft)
+                ),
                 "vendor_data_version": vdv,
                 "updated_at": _now(),
                 "sent": keep_sent,
@@ -305,8 +331,12 @@ def ensure_award_draft(state: dict, live: dict | None = None) -> dict:
                 "send_confirmation": draft.get("send_confirmation") if keep_sent else None,
             }
         )
-    elif not draft.get("checklist"):
-        draft["checklist"] = empty_checklist()
+        draft.pop("checklist", None)
+    elif not draft.get("acknowledgements") and not draft.get("checklist"):
+        draft["acknowledgements"] = empty_acknowledgements()
+    elif draft.get("checklist") and not draft.get("acknowledgements"):
+        draft["acknowledgements"] = dict(draft.get("checklist") or {})
+        draft.pop("checklist", None)
 
     # Always refresh explanation/meta display helpers from current top2 when not sent
     if live.get("available") and not draft.get("sent"):
@@ -408,30 +438,42 @@ def update_allocation(state: dict, allocation: dict[str, str], live: dict | None
         draft["sent"] = False
         draft["sent_at"] = None
         draft["send_confirmation"] = None
-        draft["checklist"] = empty_checklist()
+        draft["acknowledgements"] = empty_acknowledgements()
+        draft.pop("checklist", None)
     state["award_draft"] = draft
     return draft
 
 
-def update_checklist(state: dict, ticks: dict[str, bool] | list[str]) -> dict:
+def update_acknowledgements(state: dict, ticks: dict[str, bool] | list[str]) -> dict:
     draft = ensure_award_draft(state)
-    current = dict(draft.get("checklist") or empty_checklist())
+    current = draft_acknowledgements(draft)
     if isinstance(ticks, list):
-        for cid in REQUIRED_CHECK_IDS:
+        for cid in REQUIRED_ACK_IDS:
             current[cid] = cid in ticks
     else:
-        for cid in REQUIRED_CHECK_IDS:
+        for cid in REQUIRED_ACK_IDS:
             if cid in ticks:
                 current[cid] = bool(ticks[cid])
-    draft["checklist"] = current
+    draft["acknowledgements"] = current
+    draft.pop("checklist", None)
     draft["updated_at"] = _now()
     state["award_draft"] = draft
     return draft
 
 
+def update_checklist(state: dict, ticks: dict[str, bool] | list[str]) -> dict:
+    """Back-compat alias."""
+    return update_acknowledgements(state, ticks)
+
+
+def acknowledgements_complete(draft: dict | None) -> bool:
+    acks = draft_acknowledgements(draft)
+    return all(acks.get(cid) for cid in REQUIRED_ACK_IDS)
+
+
 def checklist_complete(draft: dict | None) -> bool:
-    checks = (draft or {}).get("checklist") or {}
-    return all(checks.get(cid) for cid in REQUIRED_CHECK_IDS)
+    """Back-compat alias."""
+    return acknowledgements_complete(draft)
 
 
 def validate_for_send(state: dict, live: dict | None = None) -> dict[str, Any]:
@@ -440,9 +482,10 @@ def validate_for_send(state: dict, live: dict | None = None) -> dict[str, Any]:
     errors: list[str] = []
     if not live.get("available"):
         errors.append("Extract vendor responses before sending award drafts.")
-    if not checklist_complete(draft):
-        missing = [c["label"] for c in CHECKLIST_ITEMS if not (draft.get("checklist") or {}).get(c["id"])]
-        errors.append("Tick all required checks before Send: " + "; ".join(missing))
+    if not acknowledgements_complete(draft):
+        acks = draft_acknowledgements(draft)
+        missing = [c["label"] for c in ACKNOWLEDGEMENT_ITEMS if not acks.get(c["id"])]
+        errors.append("Confirm all required acknowledgements before Send: " + "; ".join(missing))
     alloc = draft.get("allocation") or {}
     if not alloc:
         errors.append("Assign at least one line to an eligible vendor before sending.")

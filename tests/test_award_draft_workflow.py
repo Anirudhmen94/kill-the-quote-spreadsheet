@@ -1,4 +1,4 @@
-"""Award draft buyer workflow: top-2 → assign → checks → send → confirm → export."""
+"""Award draft buyer workflow: top-2 → assign → acknowledgements → send → confirm → export."""
 from __future__ import annotations
 
 import io
@@ -25,7 +25,7 @@ def _seed():
 
 def _tick_all(st: dict) -> dict:
     award_draft.ensure_award_draft(st)
-    award_draft.update_checklist(st, {c["id"]: True for c in award_draft.CHECKLIST_ITEMS})
+    award_draft.update_acknowledgements(st, {c["id"]: True for c in award_draft.ACKNOWLEDGEMENT_ITEMS})
     storage.save_state(st["id"], st)
     return storage.load_state(st["id"])
 
@@ -83,7 +83,7 @@ def test_award_page_layout_no_freeze_lock():
     assert 'data-testid="award-ask-card"' in html
     assert 'data-testid="award-top2"' in html
     assert 'data-testid="award-assign"' in html
-    assert 'data-testid="award-checklist"' in html
+    assert 'data-testid="award-acknowledgements"' in html
     assert 'data-testid="award-send-btn"' in html
     assert 'data-testid="award-export-link"' in html
     assert "Suggest top 2" in html
@@ -99,24 +99,28 @@ def test_award_page_layout_no_freeze_lock():
     assert "Ready to freeze?" not in html
 
 
-def test_send_disabled_until_checklist():
+def test_send_disabled_until_acknowledgements():
     st = _seed()
     page = client.get(f"/rfx/{st['id']}/award")
     assert 'data-testid="award-send-btn"' in page.text
-    # Button starts disabled in HTML when checklist incomplete
+    # Button starts disabled in HTML when acknowledgements incomplete
     assert "disabled" in page.text.split('data-testid="award-send-btn"')[1][:200]
+    assert "Acknowledgements" in page.text
+    assert "Rule checks" not in page.text
+    assert "I acknowledge" in page.text or "I confirm" in page.text
 
 
-def test_send_requires_checklist_server_side():
+def test_send_requires_acknowledgements_server_side():
     st = _seed()
-    # Visiting award creates draft allocation without ticks
+    # Visiting award creates draft allocation without acknowledgements
     client.get(f"/rfx/{st['id']}/award")
     r = client.post(f"/rfx/{st['id']}/award/send-notices", follow_redirects=False)
     assert r.status_code in (302, 303)
     st2 = storage.load_state(st["id"])
     flash = st2.get("flash") or {}
     assert flash.get("level") == "error"
-    assert "check" in (flash.get("message") or "").lower() or "tick" in (flash.get("message") or "").lower()
+    msg = (flash.get("message") or "").lower()
+    assert "acknowledgement" in msg or "confirm" in msg
 
 
 def test_send_award_and_regret_with_confirmation():

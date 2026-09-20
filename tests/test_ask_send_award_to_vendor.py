@@ -23,7 +23,7 @@ def _seed():
 
 def _tick_all(st: dict) -> dict:
     award_draft.ensure_award_draft(st)
-    award_draft.update_checklist(st, {c["id"]: True for c in award_draft.CHECKLIST_ITEMS})
+    award_draft.update_acknowledgements(st, {c["id"]: True for c in award_draft.ACKNOWLEDGEMENT_ITEMS})
     storage.save_state(st["id"], st)
     return storage.load_state(st["id"])
 

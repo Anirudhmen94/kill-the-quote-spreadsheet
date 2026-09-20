@@ -231,7 +231,7 @@ def test_award_send_notices_export_and_stakeholder_alerts():
     # Create draft via page load, tick checklist
     client.get(f"/rfx/{st['id']}/award")
     st = storage.load_state(st["id"])
-    award_draft.update_checklist(st, {c["id"]: True for c in award_draft.CHECKLIST_ITEMS})
+    award_draft.update_acknowledgements(st, {c["id"]: True for c in award_draft.ACKNOWLEDGEMENT_ITEMS})
     storage.save_state(st["id"], st)
     before = len(storage.load_state(st["id"]).get("outbox") or [])
 
@@ -290,7 +290,7 @@ def test_award_send_notices_failure_redirects_with_error_flash():
     flash = st2.get("flash") or {}
     assert flash.get("level") == "error"
     msg = (flash.get("message") or "").lower()
-    assert "check" in msg or "tick" in msg or "assign" in msg or "checklist" in msg
+    assert "acknowledgement" in msg or "confirm" in msg or "assign" in msg or "check" in msg or "tick" in msg
 
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
