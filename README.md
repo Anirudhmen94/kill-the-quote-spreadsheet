@@ -4,6 +4,8 @@ An evidence-backed sourcing prototype for corrugated packaging. A buyer describe
 
 Built for the Aerchain "Kill the Quote Spreadsheet" product assignment. The AI loops are real (Anthropic Claude); the plumbing (email delivery, vendor identity) is stubbed.
 
+**Live demo:** https://kill-the-quote-spreadsheet-anirudhmen94s-projects.vercel.app (Vercel, Python/FastAPI, Vercel Blob for storage). Deployed source is verifiable against this repo at `/healthz?fingerprint=1`, which returns a SHA-1 per file.
+
 ## What it does
 
 | Step | What happens | AI or code? |
