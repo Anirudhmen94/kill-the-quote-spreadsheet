@@ -4,7 +4,7 @@
     "app.py": {
       "maxDuration": 300,
       "memory": 2048,
-      "excludeFiles": "{uploads/**,terminals/**,data/store/**,tests/**,*.md}"
+      "excludeFiles": "{uploads/**,terminals/**,data/store/**,tests/**,DEMO_SCRIPT.md,README.md}"
     }
   }
 }
