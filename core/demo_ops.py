@@ -410,7 +410,9 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
 
 
 def is_demo_mode(state: dict) -> bool:
-    return bool(state.get("demo_mode", True))
+    # Only on when explicitly set (Interview reset / golden seed). Missing key ⇒ off
+    # so a normal draft can Simulate vendor replies without fighting Demo mode.
+    return bool(state.get("demo_mode", False))
 
 
 def set_demo_mode(state: dict, enabled: bool) -> None:
@@ -420,7 +422,18 @@ def set_demo_mode(state: dict, enabled: bool) -> None:
 def guard_destructive(state: dict, action: str) -> tuple[bool, str]:
     if not is_demo_mode(state):
         return True, ""
-    if action in ("regenerate_replies", "full_wipe", "delete_rfx", "simulate_overwrite"):
+    # First Simulate (no files yet) must work even in demo mode — buyers need replies.
+    # Only block overwriting an existing messy seed / full wipe.
+    if action == "regenerate_replies":
+        has_files = any((v.get("files") or []) for v in (state.get("vendors") or []))
+        if not has_files:
+            return True, ""
+        return (
+            False,
+            "Demo mode is on. Use Interview reset to restore the golden messy seed, "
+            "or turn Demo mode off before regenerating vendor replies.",
+        )
+    if action in ("full_wipe", "delete_rfx", "simulate_overwrite"):
         return (
             False,
             "Demo mode is on. Use Interview reset to restore the golden messy seed, "

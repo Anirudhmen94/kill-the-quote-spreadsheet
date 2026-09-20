@@ -85,4 +85,5 @@ def new_state(brief: str, rfx: dict) -> dict:
         "calculation_snapshots": [],
         "version_events": [],
         "ai_log": [],
+        "demo_mode": False,
     }

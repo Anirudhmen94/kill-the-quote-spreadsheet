@@ -13,6 +13,9 @@
         {% if has_files %}Regenerate{% else %}Simulate{% endif %} 5 vendor replies
       </button>
     </form>
+    {% if demo_mode and has_files %}
+    <span class="text-xs text-amber-800 max-w-xs">Demo mode protects this seed — use <strong>Interview reset</strong> or turn Demo mode off to regenerate.</span>
+    {% endif %}
     <span id="sim-busy" class="htmx-indicator text-sm text-slate-600 items-center gap-1">Generating Excel, PDF, Word, photo and email…</span>
     {% set pending = state.vendors|selectattr('files')|rejectattr('status','equalto','extracted')|list %}
     {% if pending %}

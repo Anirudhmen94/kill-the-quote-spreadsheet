@@ -133,12 +133,19 @@ def test_interview_reset_restores_messy_seed_and_clears_stale_ask():
 def test_demo_mode_guards_regenerate():
     st = demo_ops.build_golden_seed()
     assert demo_ops.is_demo_mode(st)
+    # Overwrite blocked while seed already has files
     ok, msg = demo_ops.guard_destructive(st, "regenerate_replies")
     assert not ok
     assert "Demo mode" in msg
+    # First simulate (no files) allowed even in demo mode
+    empty = {**st, "vendors": [{**v, "files": [], "extraction": None, "status": "awaiting"} for v in st["vendors"]]}
+    ok_first, _ = demo_ops.guard_destructive(empty, "regenerate_replies")
+    assert ok_first
     demo_ops.set_demo_mode(st, False)
     ok2, _ = demo_ops.guard_destructive(st, "regenerate_replies")
     assert ok2
+    # Missing key defaults to off
+    assert not demo_ops.is_demo_mode({"id": "x"})
 
 
 def test_compare_ask_award_share_exclusion_ssot():
