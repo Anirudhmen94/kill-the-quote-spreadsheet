@@ -701,35 +701,51 @@ def live_award_calculation(state: dict) -> dict:
 
     Default strategy: quality-gated cheapest-per-line. Assumed / conversion-failed
     / not-quoted cells never enter totals. Compare / Ask / Award all read this.
+    Conditional discounts stay out of the official total until buyer confirms.
     """
     ensure_snapshot_fields(state)
     if not any(v.get("extraction") for v in state.get("vendors", [])):
         return {"available": False}
 
     # Local imports avoid cycles (awardability/gates import engine only)
-    from . import awardability, gates
+    from . import awardability, gates, scenario
 
     cmp = awardability.enrich_state_comparison(state)
     g = cmp["gates"]
     eligible = gates.gate_filter_vendors(cmp, g, True)
-    if not eligible:
-        split = {
-            "eligible_vendors": [],
-            "rows": [{"line_no": ln["line_no"], "description": ln["description"], "annual_qty": ln["annual_qty"], "winner": None, "unit_inr": None, "extended_inr": None, "runner_up": None, "runner_up_unit_inr": None} for ln in cmp["lines"]],
-            "total_extended_inr": 0.0,
-            "uncovered_lines": [ln["line_no"] for ln in cmp["lines"]],
-            "share_by_vendor": {},
-            "caveats": ["No vendor cleared the quality questionnaire. Quality-gated award has nothing to award."],
-            "allow_needs_review": False,
-        }
-    else:
-        split = engine.cheapest_per_line(cmp, eligible, False, False)
+    conf = state.get("discount_confirmations") or {}
+    res = scenario.compute_award_scenario(
+        cmp,
+        strategy="quality_gated_cheapest",
+        vendor_ids=eligible or [],
+        require_quality_gate=True,
+        discount_confirmations=conf,
+        vendor_data_version=current_version(state),
+    )
+    split = {
+        "eligible_vendors": res.eligible_vendors,
+        "eligible_vendor_ids": res.eligible_vendor_ids,
+        "rows": res.rows,
+        "total_extended_inr": res.total_extended_inr,
+        "total_extended_paise": res.total_extended_paise,
+        "uncovered_lines": res.uncovered_lines,
+        "share_by_vendor": res.share_by_vendor,
+        "caveats": res.caveats,
+        "allow_needs_review": False,
+        "conditional_discounts": res.conditional_discounts,
+        "readiness": res.readiness,
+        "readiness_headline": res.readiness_headline,
+    }
 
     params = {
         "strategy": "quality_gated_cheapest",
         "require_cleared_questionnaire": True,
         "allow_needs_review": False,
         "eligible_vendor_ids": eligible or [],
+        "discount_confirmations": {
+            vid: bool(meta.get("confirmed") if isinstance(meta, dict) else meta)
+            for vid, meta in conf.items()
+        },
     }
     snap = create_calculation_snapshot(
         state,
@@ -737,21 +753,27 @@ def live_award_calculation(state: dict) -> dict:
         parameters=params,
         result={
             "total_extended_inr": split["total_extended_inr"],
-            "covered_line_count": cmp["line_count"] - len(split["uncovered_lines"]),
+            "total_extended_paise": res.total_extended_paise,
+            "covered_line_count": res.covered_line_count,
             "uncovered_lines": split["uncovered_lines"],
             "share_by_vendor": split["share_by_vendor"],
             "eligible_vendors": split.get("eligible_vendors") or [],
             "exclusion_summary": cmp.get("exclusion_summary"),
             "gates_summary": g.get("summary"),
+            "conditional_discounts": res.conditional_discounts,
         },
     )
+    # Attach snapshot id onto the scenario result for downstream consumers
+    res_dict = res.as_dict()
+    res_dict["calculation_snapshot_id"] = snap["id"]
     return {
         "available": True,
         "snapshot": snap,
         "vendor_data_version": snap["vendor_data_version"],
         "strategy": "quality-gated cheapest per line",
         "total_extended_inr": split["total_extended_inr"],
-        "covered_line_count": cmp["line_count"] - len(split["uncovered_lines"]),
+        "total_extended_paise": res.total_extended_paise,
+        "covered_line_count": res.covered_line_count,
         "uncovered_lines": split["uncovered_lines"],
         "share_by_vendor": split["share_by_vendor"],
         "split": split,
@@ -760,6 +782,10 @@ def live_award_calculation(state: dict) -> dict:
         "blockers": awardability.blockers_panel(cmp),
         "exclusion_summary": cmp.get("exclusion_summary"),
         "created_at": snap["created_at"],
+        "conditional_discounts": res.conditional_discounts,
+        "scenario": res_dict,
+        "readiness": res.readiness,
+        "readiness_headline": res.readiness_headline,
     }
 
 

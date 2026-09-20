@@ -237,11 +237,39 @@ def _cell_selected_blocker(cell: dict, line_no: int, vendor: dict) -> dict | Non
 # Conditional discounts (Phase A.4) — Kraftline 5% stays out until confirmed
 # ---------------------------------------------------------------------------
 
-def _conditional_discount_info(cmp: dict, share: dict, apply: bool) -> dict:
+def _confirmed_discount_ids(
+    discounts_confirmed: bool | set[str] | dict | None,
+) -> set[str] | bool:
+    """Return True (all), False (none), or a set of confirmed vendor_ids."""
+    if discounts_confirmed is True:
+        return True
+    if not discounts_confirmed:
+        return False
+    if isinstance(discounts_confirmed, set):
+        return discounts_confirmed
+    if isinstance(discounts_confirmed, dict):
+        return {
+            vid
+            for vid, meta in discounts_confirmed.items()
+            if meta is True or (isinstance(meta, dict) and meta.get("confirmed"))
+        }
+    return False
+
+
+def _conditional_discount_info(
+    cmp: dict,
+    share: dict,
+    apply: bool | set[str] | dict | None,
+    confirmations: dict | None = None,
+) -> dict:
+    """Official total excludes unconfirmed discounts; potential shown separately."""
+    conf_ids = _confirmed_discount_ids(apply)
+    confirmations = confirmations or {}
     potential = 0
     applied = 0
     details = []
     share_after = {k: dict(v) for k, v in share.items()}
+    any_applied = False
     for name, s in share.items():
         v = next((x for x in cmp["vendors"] if x["name"] == name), None)
         if not v:
@@ -256,30 +284,46 @@ def _conditional_discount_info(cmp: dict, share: dict, apply: bool) -> dict:
             base = inr_to_paise(s.get("extended_inr") or 0) or 0
         saving = int(round(base * float(pct) / 100.0))
         potential += saving
-        details.append(
-            {
-                "vendor": name,
-                "vendor_id": v["vendor_id"],
-                "pct": float(pct),
-                "condition": cond,
-                "potential_saving_paise": saving,
-                "potential_saving_inr": paise_to_inr(saving),
-                "confirmed": bool(apply),
-            }
-        )
-        if apply:
+        vid = v["vendor_id"]
+        meta = confirmations.get(vid) if isinstance(confirmations, dict) else None
+        if conf_ids is True:
+            is_confirmed = True
+        elif conf_ids is False:
+            is_confirmed = False
+        else:
+            is_confirmed = vid in conf_ids
+        entry = {
+            "vendor": name,
+            "vendor_id": vid,
+            "pct": float(pct),
+            "condition": cond,
+            "potential_saving_paise": saving,
+            "potential_saving_inr": paise_to_inr(saving),
+            "confirmed": bool(is_confirmed),
+        }
+        if isinstance(meta, dict):
+            entry["confirmed_at"] = meta.get("confirmed_at")
+            entry["confirmed_by"] = meta.get("confirmed_by")
+            entry["confirmed_condition"] = meta.get("condition") or cond
+        details.append(entry)
+        if is_confirmed:
+            any_applied = True
             applied += saving
             share_after[name]["extended_paise"] = base - saving
             share_after[name]["extended_inr"] = paise_to_inr(base - saving)
     total_before = sum((s.get("extended_paise") or 0) for s in share.values())
+    official_paise = total_before - (applied if any_applied else 0)
+    all_confirmed_paise = total_before - potential
     return {
         "potential_paise": potential,
         "potential_inr": paise_to_inr(potential) or 0.0,
-        "applied_paise": applied if apply else 0,
-        "applied_inr": (paise_to_inr(applied) or 0.0) if apply else 0.0,
+        "applied_paise": applied if any_applied else 0,
+        "applied_inr": (paise_to_inr(applied) or 0.0) if any_applied else 0.0,
         "total_before_paise": total_before,
-        "total_after_paise": total_before - (applied if apply else 0),
-        "share_after": share_after if apply else share,
+        "total_after_paise": official_paise,
+        "potential_official_paise": all_confirmed_paise,
+        "potential_official_inr": paise_to_inr(all_confirmed_paise) or 0.0,
+        "share_after": share_after if any_applied else share,
         "details": details,
         "summary": (
             "; ".join(f"{d['vendor']} {d['pct']:g}% ({d['condition']})" for d in details)
@@ -371,13 +415,22 @@ def compute_award_scenario(
     allow_needs_review: bool = False,
     max_vendors: int | None = None,
     apply_conditional_discounts: bool = False,
-    discounts_confirmed: bool = False,
+    discounts_confirmed: bool | set[str] | dict = False,
+    discount_confirmations: dict | None = None,
     vendor_data_version: int = 0,
     calculation_snapshot_id: str | None = None,
     require_quality_gate: bool = False,
 ) -> AwardScenarioResult:
     """Canonical award-scenario calculation for Compare / Ask / Award / freeze."""
-    apply_disc = bool(discounts_confirmed or apply_conditional_discounts)
+    conf = discount_confirmations if discount_confirmations is not None else (
+        discounts_confirmed if isinstance(discounts_confirmed, dict) else None
+    )
+    if apply_conditional_discounts and not discounts_confirmed and not conf:
+        apply_disc: bool | set[str] | dict | None = True
+    elif conf is not None:
+        apply_disc = conf
+    else:
+        apply_disc = discounts_confirmed
 
     cheapest = getattr(engine, "cheapest_per_line", None) or getattr(engine, "cheapest_per_line")
     award_fn = getattr(engine, "award_scenario", None) or getattr(engine, "award_scenario", None)
@@ -456,16 +509,17 @@ def compute_award_scenario(
         )
         rows, total_paise, share, uncovered, eligible_names, eligible_ids, caveats = _rows_from_cheapest(raw, cmp)
 
-    disc_info = _conditional_discount_info(cmp, share, apply_disc)
-    if disc_info["applied_paise"] and apply_disc:
+    disc_info = _conditional_discount_info(cmp, share, apply_disc, confirmations=conf if isinstance(conf, dict) else None)
+    if disc_info["applied_paise"]:
         total_paise = disc_info["total_after_paise"]
         share = disc_info["share_after"]
         caveats = list(caveats) + [
             "Conditional discounts confirmed by buyer and applied to the official total."
         ]
-    elif disc_info["potential_paise"]:
+    if disc_info["potential_paise"] and disc_info["applied_paise"] < disc_info["potential_paise"]:
+        held = disc_info["potential_paise"] - disc_info["applied_paise"]
         caveats = list(caveats) + [
-            f"Conditional discounts available (potential −₹{disc_info['potential_inr']:,.2f}) "
+            f"Conditional discounts available (potential −₹{paise_to_inr(held):,.2f}) "
             "— held out of the official total until buyer confirms."
         ]
 
@@ -547,15 +601,18 @@ def compute_award_scenario(
                     "blocks_complete_freeze": True,
                 }
             )
-    if disc_info["potential_paise"] and not apply_disc:
+    unconfirmed = [d for d in disc_info["details"] if not d.get("confirmed")]
+    if unconfirmed:
         acks.append(
             {
                 "class": EXC_BUYER_ACK,
                 "kind": "conditional_discount",
                 "line_no": None,
-                "vendor_id": None,
+                "vendor_id": unconfirmed[0].get("vendor_id"),
                 "label": "Conditional discount not confirmed",
-                "detail": disc_info["summary"],
+                "detail": "; ".join(
+                    f"{d['vendor']} {d['pct']:g}% ({d['condition']})" for d in unconfirmed
+                ),
                 "blocks_complete_freeze": False,
             }
         )
@@ -603,8 +660,8 @@ def compute_award_scenario(
         readiness_headline=headline,
         require_quality_gate=require_quality_gate or require_cleared_questionnaire,
         allow_needs_review=allow_needs_review,
-        apply_conditional_discounts=apply_disc,
-        discounts_confirmed=apply_disc,
+        apply_conditional_discounts=bool(disc_info.get("applied_paise")),
+        discounts_confirmed=bool(disc_info.get("applied_paise")),
     )
 
 
@@ -779,13 +836,11 @@ def recommendation_lifecycle(state: dict) -> dict:
             "unsaved_banner_shown": True,
         }
 
-    banner = None
-    if not state.get("_unsaved_rec_banner_shown"):
-        banner = "Live calculation is not saved as a recommendation yet. Save with a rationale before freeze."
-        state["_unsaved_rec_banner_shown"] = True
+    # Unsaved hint lives once on the Award live-calc card title — do not emit a
+    # second equivalent banner in the freeze panel (Award banner dedupe).
     return {
         "lifecycle": REC_CALCULATED,
-        "banner": banner,
+        "banner": None,
         "can_freeze": False,
         "freeze_blocked_reason": "Save the current calculation as a recommendation (rationale required) before freeze.",
         "current": None,

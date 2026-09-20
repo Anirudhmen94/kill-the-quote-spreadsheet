@@ -77,7 +77,7 @@
           {% if rec and rec.status == 'current' %}
           <div class="font-medium">Current award recommendation · Snapshot {{ rec.calculation_snapshot_id or live.snapshot.id }}</div>
           {% else %}
-          <div class="font-medium">Current calculation — recommendation not yet saved</div>
+          <div class="font-medium">Current calculation — recommendation not saved</div>
           {% endif %}
           <div class="text-xs text-slate-500 mt-0.5 font-mono">
             Vendor data version {{ live.vendor_data_version }}
@@ -92,6 +92,44 @@
         {% for name, s in live.share_by_vendor.items() %}<span class="rounded bg-slate-100 px-2 py-1">{{ name }}: {{ s.lines }} lines · {{ s.extended_inr|inr }}</span>{% endfor %}
         {% if live.uncovered_lines %}<span class="rounded bg-rose-100 text-rose-800 px-2 py-1">No usable quote: lines {{ live.uncovered_lines|join(', ') }}</span>{% endif %}
       </div>
+      {% set disc = conditional_discounts or live.conditional_discounts %}
+      {% if disc and disc.details %}
+      <div class="px-4 py-3 border-t border-slate-100 text-xs space-y-2 bg-slate-50/60">
+        <div class="font-medium text-slate-800">Conditional discounts</div>
+        <div class="flex flex-wrap gap-3">
+          <span class="rounded border border-slate-200 bg-white px-2 py-1">Official total (excludes unconfirmed): <strong class="tabular-nums">{{ live.total_extended_inr|inr }}</strong></span>
+          {% if disc.potential_paise and disc.applied_paise < disc.potential_paise %}
+          <span class="rounded border border-amber-200 bg-amber-50 text-amber-950 px-2 py-1">Potential if all confirmed: <strong class="tabular-nums">{{ disc.potential_official_inr|inr }}</strong> (−{{ disc.potential_inr|inr }})</span>
+          {% elif disc.applied_paise %}
+          <span class="rounded border border-emerald-200 bg-emerald-50 text-emerald-950 px-2 py-1">Confirmed discounts applied: −{{ disc.applied_inr|inr }}</span>
+          {% endif %}
+        </div>
+        <ul class="space-y-2">
+          {% for d in disc.details %}
+          <li class="rounded border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div class="font-medium text-slate-800">{{ d.vendor }} · {{ d.pct }}%</div>
+              <div class="text-slate-600">{{ d.condition }}</div>
+              <div class="text-slate-500 mt-0.5">Potential saving {{ d.potential_saving_inr|inr }}</div>
+              {% if d.confirmed %}
+              <div class="mt-1 text-emerald-800">Confirmed{% if d.confirmed_by %} by {{ d.confirmed_by }}{% endif %}{% if d.confirmed_at %} · {{ d.confirmed_at[:16].replace('T',' ') }} UTC{% endif %}{% if d.confirmed_condition %} · “{{ d.confirmed_condition }}”{% endif %}</div>
+              {% else %}
+              <div class="mt-1 text-amber-900">Not confirmed — held out of official total</div>
+              {% endif %}
+            </div>
+            {% if not d.confirmed %}
+            <form method="post" action="/rfx/{{ state.id }}/award/confirm-discount" class="shrink-0 flex items-center gap-2">
+              <input type="hidden" name="vendor_id" value="{{ d.vendor_id }}">
+              <input type="hidden" name="confirmed_by" value="buyer">
+              <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
+                title="Apply this conditional discount into the official total. Creates a new calculation snapshot.">Confirm into official total</button>
+            </form>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
       {% if split %}
       <div class="overflow-x-auto">
         <table class="w-full text-xs">
@@ -131,7 +169,11 @@
     </div>
     {% elif not rec %}
     <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Current calculation — recommendation not yet saved</div>
+      {% if not (live and live.available) %}
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Current calculation — recommendation not saved</div>
+      {% else %}
+      <div class="px-4 py-3 border-b border-slate-200 font-medium text-slate-700">Save a recommendation</div>
+      {% endif %}
       <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/compare#analyst" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
     </div>
     {% endif %}

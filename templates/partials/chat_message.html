@@ -9,7 +9,11 @@
       <div class="mt-1">Stale answer · Vendor data changed after this answer was generated</div>
     </div>
     {% elif m.status == 'failed' %}
-    <div class="mb-3 rounded-md border border-rose-300 bg-rose-50 text-rose-900 text-xs px-3 py-2">This answer failed to generate.</div>
+    <div class="mb-3 rounded-md border border-rose-300 bg-rose-50 text-rose-900 text-xs px-3 py-2">This answer failed to generate.{% if m.error %} {{ m.error }}{% endif %}</div>
+    {% elif m.status == 'fallback' or m.narrative_fallback %}
+    <div class="mb-3 rounded-md border border-amber-300 bg-amber-50 text-amber-950 text-xs px-3 py-2">
+      <strong>Deterministic fallback.</strong> The analyst narrative contradicted the engine — showing engine totals only (no invented figures).
+    </div>
     {% endif %}
 
     <div class="prose-sm text-sm text-slate-800 leading-relaxed">{{ m.answer | md | safe }}</div>

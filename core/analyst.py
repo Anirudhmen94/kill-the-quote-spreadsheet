@@ -121,7 +121,8 @@ def safe_calculate(expression: str) -> float:
     return ev(ast.parse(cleaned, mode="eval"))
 
 
-def make_executor(cmp: dict):
+def make_executor(cmp: dict, *, discounts_confirmed: bool = False):
+    """Tool executor. Conditional discounts follow buyer confirm state by default."""
     def execute(name: str, args: dict) -> Any:
         if name == "calculate":
             val = safe_calculate(args["expression"])
@@ -130,10 +131,12 @@ def make_executor(cmp: dict):
             return engine.comparison_table(cmp, args.get("vendor_ids"), args.get("line_nos"))
         if name == "cheapest_per_line":
             return engine.cheapest_per_line(cmp, args.get("vendor_ids"), args.get("require_cleared_questionnaire", False), args.get("allow_needs_review", False))
+        # Default apply_conditional_discounts to buyer-confirmed state (Ask/Award SSOT)
+        apply_disc = bool(args["apply_conditional_discounts"]) if "apply_conditional_discounts" in args else bool(discounts_confirmed)
         if name == "vendor_totals":
-            return engine.vendor_totals(cmp, args.get("vendor_ids"), args.get("allow_needs_review", False), args.get("apply_conditional_discounts", False))
+            return engine.vendor_totals(cmp, args.get("vendor_ids"), args.get("allow_needs_review", False), apply_disc)
         if name == "award_scenario":
-            return engine.award_scenario(cmp, args.get("strategy", "split_cheapest"), args.get("vendor_ids"), args.get("require_cleared_questionnaire", False), args.get("allow_needs_review", False), args.get("max_vendors"), args.get("apply_conditional_discounts", False))
+            return engine.award_scenario(cmp, args.get("strategy", "split_cheapest"), args.get("vendor_ids"), args.get("require_cleared_questionnaire", False), args.get("allow_needs_review", False), args.get("max_vendors"), apply_disc)
         if name == "sensitivity":
             return engine.sensitivity(cmp, args["vendor_id"], float(args["pct_change"]), args.get("require_cleared_questionnaire", False), args.get("allow_needs_review", False))
         if name == "list_flags":
@@ -232,12 +235,14 @@ def ask(state: dict, question: str, history: list[dict], log: list | None = None
         messages.append({"role": "assistant", "content": prior})
     messages.append({"role": "user", "content": context + "\n\nBuyer's question: " + question})
 
+    conf = state.get("discount_confirmations") or {}
+    discounts_on = bool(conf)  # any confirmed → tools may apply those paths when asked
     text, trace = llm.agent_loop(
         purpose="analyst",
         system=SYSTEM,
         messages=messages,
         tools=TOOLS,
-        execute=make_executor(cmp),
+        execute=make_executor(cmp, discounts_confirmed=discounts_on),
         max_rounds=8,
         log=log,
     )
@@ -261,6 +266,53 @@ def ask(state: dict, question: str, history: list[dict], log: list | None = None
             }
     snap["result"] = award_result or {"question": question}
 
+    # Narrative vs deterministic scenario — on contradiction show structured fallback (do not invent totals)
+    narrative_fallback = None
+    try:
+        from . import awardability, gates, scenario
+
+        enriched = awardability.enrich_state_comparison(state)
+        eligible = gates.gate_filter_vendors(enriched, enriched["gates"], True)
+        scen = scenario.compute_award_scenario(
+            enriched,
+            strategy="quality_gated_cheapest",
+            vendor_ids=eligible or [],
+            require_quality_gate=True,
+            discount_confirmations=conf,
+            vendor_data_version=context_version,
+            calculation_snapshot_id=snap.get("id"),
+        )
+        check = scenario.validate_narrative_vs_engine(text or "", scen)
+        if not check.get("ok"):
+            narrative_fallback = check["fallback"]
+            fb = narrative_fallback
+            # Replace inventable prose with deterministic facts; keep tool tables
+            text = (
+                f"**Deterministic fallback** — {fb.get('note')}\n\n"
+                f"**Readiness:** {fb.get('headline')} (`{fb.get('readiness')}`)\n\n"
+                f"**Official total (excludes unconfirmed discounts):** "
+                f"₹{fb.get('total_extended_inr', 0):,.2f}\n\n"
+                f"**Coverage:** scenario {fb.get('scenario_award_coverage', {}).get('label', '—')}; "
+                f"market {fb.get('market_quote_coverage', {}).get('label', '—')}\n\n"
+                f"**Share by vendor:** "
+                + (", ".join(
+                    f"{k}: ₹{(v.get('extended_inr') if isinstance(v, dict) else v):,.2f}"
+                    if isinstance(v, dict) and v.get('extended_inr') is not None
+                    else f"{k}: {v}"
+                    for k, v in (fb.get('share_by_vendor') or {}).items()
+                ) or "—")
+                + "\n\n"
+                f"_Problems detected: {', '.join(fb.get('problems') or [])}. "
+                "Totals above come from the engine — not from the model narrative._"
+            )
+            for c in (fb.get("caveats") or []):
+                if c not in caveats:
+                    caveats.append(c)
+            caveats.append("Analyst narrative contradicted the engine — deterministic fallback shown.")
+    except Exception:
+        # Validation must never block an answer; leave prose as-is
+        narrative_fallback = None
+
     result = {
         "question": question,
         "answer": text,
@@ -269,4 +321,7 @@ def ask(state: dict, question: str, history: list[dict], log: list | None = None
         "charts": charts,
         "caveats": caveats,
     }
+    if narrative_fallback:
+        result["narrative_fallback"] = narrative_fallback
+        result["status"] = result.get("status") or "fallback"
     return snapshots.attach_answer_metadata(state, result, snap)

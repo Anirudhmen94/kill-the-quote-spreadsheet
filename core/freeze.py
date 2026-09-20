@@ -232,7 +232,7 @@ def validate_freeze_request(
         vendor_data_version=proposal["vendor_data_version"],
         calculation_snapshot_id=proposal["snapshot"]["id"],
         require_quality_gate=require_quality_gate,
-        discounts_confirmed=bool((state.get("discount_confirmations") or {})),
+        discount_confirmations=state.get("discount_confirmations") or {},
     )
 
     selected_blockers = result.selected_award_blockers

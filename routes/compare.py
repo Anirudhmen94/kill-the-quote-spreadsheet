@@ -235,6 +235,7 @@ def award_page(request: Request, rfx_id: str):
         market_quote_coverage=cmp.get("market_quote_coverage"),
         freeze_check_complete=freeze_check_complete,
         discount_confirmations=state.get("discount_confirmations") or {},
+        conditional_discounts=(live.get("conditional_discounts") if live.get("available") else None),
         buyer_review_log=state.get("buyer_review_log") or state.get("reviews") or [],
         blended_rate_banner=cmp.get("blended_rate_banner"),
     )
@@ -335,18 +336,53 @@ async def freeze_award_route(
 
 
 @router.post("/rfx/{rfx_id}/award/confirm-discount", response_class=HTMLResponse)
-def confirm_discount_route(request: Request, rfx_id: str, vendor_id: str = Form(...)):
+def confirm_discount_route(
+    request: Request,
+    rfx_id: str,
+    vendor_id: str = Form(...),
+    confirmed_by: str = Form("buyer"),
+):
     """Buyer confirms a conditional discount into the official total (Phase A.4)."""
+    from core import scenario as _scenario
+
     state = load_or_404(rfx_id)
+    cmp = awardability.enrich_state_comparison(state) if any(v.get("extraction") for v in state["vendors"]) else engine.build_comparison(state)
+    vendor = next((v for v in cmp.get("vendors", []) if v["vendor_id"] == vendor_id), None)
+    if not vendor:
+        return error_fragment("Vendor not found.", 404)
+    commercial = vendor.get("commercial") or {}
+    pct = commercial.get("discount_pct")
+    if not pct:
+        return error_fragment("This vendor has no conditional discount to confirm.", 400)
+    condition = commercial.get("discount_condition") or f"{pct:g}% conditional discount"
     state.setdefault("discount_confirmations", {})
     state["discount_confirmations"][vendor_id] = {
-        "confirmed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds"),
         "confirmed": True,
+        "confirmed_at": now_iso(),
+        "confirmed_by": (confirmed_by or "buyer").strip() or "buyer",
+        "condition": condition,
+        "pct": float(pct),
+        "vendor_name": vendor.get("name"),
     }
-    from core import snapshots
+    _scenario.append_buyer_review_log(
+        state,
+        {
+            "source": "award",
+            "vendor_id": vendor_id,
+            "vendor_name": vendor.get("name"),
+            "line_no": None,
+            "action": "confirm_discount",
+            "value_inr": None,
+            "note": f"Confirmed {pct:g}% conditional discount — {condition}",
+        },
+    )
     snapshots.bump_vendor_data_version(state, "discount_confirmed", affected_vendor_ids=[vendor_id])
+    # Recalc + new snapshot so Ask/Award share the confirmed official total
+    live = snapshots.live_award_calculation(state)
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/award")
+    if request.headers.get("HX-Request"):
+        return hx_redirect(f"/rfx/{rfx_id}/award")
+    return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
 
 
 @router.get("/rfx/{rfx_id}/award/freeze.zip")

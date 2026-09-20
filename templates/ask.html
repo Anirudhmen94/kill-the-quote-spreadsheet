@@ -22,18 +22,22 @@
       {% for m in state.chat %}{% set idx = loop.index0 %}{% include "partials/chat_message.html" %}{% endfor %}
     </div>
     <div id="chat-error" class="mt-3"></div>
-    <form id="ask-form" hx-post="/rfx/{{ state.id }}/ask" hx-target="#chat" hx-swap="beforeend" hx-indicator="#ask-busy" hx-disabled-elt="#ask-btn"
-          hx-on::after-request="if(event.detail.successful){this.reset(); window.scrollTo(0, document.body.scrollHeight);} else {document.getElementById('chat-error').innerHTML = event.detail.xhr.responseText;}"
+    <form id="ask-form" hx-post="/rfx/{{ state.id }}/ask" hx-target="#chat" hx-swap="beforeend" hx-indicator="#ask-busy"
+          hx-disabled-elt="#ask-btn, #ask-form textarea"
+          hx-sync="this:drop"
+          hx-on::config-request="window.__askBusy=true; document.getElementById('chat-error').innerHTML='';"
+          hx-on::after-request="window.__askBusy=false; if(event.detail.successful){this.reset(); window.scrollTo(0, document.body.scrollHeight); document.getElementById('chat-error').innerHTML='';} else {document.getElementById('chat-error').innerHTML = event.detail.xhr.responseText;}"
           class="mt-6 sticky bottom-4 rounded-xl border border-slate-300 bg-white shadow-lg p-3">
       <textarea name="question" rows="2" required placeholder="e.g. Split cheapest per line, but only among vendors who cleared the questionnaire. What does it cost and who gets what?"
-        class="w-full resize-none border-0 focus:ring-0 text-sm p-1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault(); this.form.requestSubmit();}"></textarea>
+        class="w-full resize-none border-0 focus:ring-0 text-sm p-1 disabled:opacity-60"
+        onkeydown="if(window.__askBusy){event.preventDefault(); return;} if(event.key==='Enter'&&!event.shiftKey){event.preventDefault(); this.form.requestSubmit();}"></textarea>
       <div class="flex items-center justify-between mt-1">
         <span id="ask-busy" class="htmx-indicator items-center gap-2 text-xs text-slate-600">
           <svg class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-          Running calculations and writing the answer (10-40 s)
+          Running calculations — Ask disabled until this finishes (10-40 s)
         </span>
         <span class="text-xs text-slate-400 htmx-hide">Enter to send · Shift+Enter for a new line</span>
-        <button id="ask-btn" class="rounded-lg bg-slate-900 text-white px-4 py-1.5 text-sm font-medium hover:bg-slate-800 disabled:opacity-50" {% if not ai_ok %}disabled{% endif %}>Ask</button>
+        <button id="ask-btn" type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-1.5 text-sm font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed" {% if not ai_ok %}disabled{% endif %}>Ask</button>
       </div>
     </form>
   </div>
