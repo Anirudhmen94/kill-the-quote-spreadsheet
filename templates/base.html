@@ -87,8 +87,8 @@
         {% set steps = [
           ('rfx','RFx','The drafted request: scope, lines, terms, questionnaire. Send from here.'),
           ('email','Email','Incoming vendor replies and stubbed outbound mail (RFx, clarifications, notices).'),
-          ('compare','Compare','Side-by-side prices in INR/pc with evidence. Gate Pass/Partial/Fail lives here.'),
-          ('exceptions','Exceptions','Messy cells and gate fails that block a clean award — override or get approval.'),
+          ('compare','Compare','Five-vendor price comparison in INR/pc with read-only evidence. Gate badges and coverage live here.'),
+          ('exceptions','Exceptions','Flagged anomalies and gate fails — override, deny, or send for approval.'),
           ('award','Award','Quality-gated recommendation, freeze pack, notices and export.')
         ] %}
         {% for key, label, tiptext in steps %}

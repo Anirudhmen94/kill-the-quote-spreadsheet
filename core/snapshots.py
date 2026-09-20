@@ -22,10 +22,12 @@ BUMP_REASONS = (
     "vendor_deleted",
     "review_accepted",
     "review_overridden",
+    "review_denied",
     "review_cleared",
     "questionnaire_updated",
     "manual_edit",
     "vendor_simulated",
+    "discount_confirmed",
 )
 
 

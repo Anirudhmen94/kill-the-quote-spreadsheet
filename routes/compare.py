@@ -1,4 +1,4 @@
-"""Comparison grid, evidence drawer, reviews, award page and exports."""
+"""Comparison grid, read-only evidence drawer, award page and exports."""
 from __future__ import annotations
 
 import io
@@ -139,40 +139,6 @@ def evidence_image(rfx_id: str, vendor_id: str, file_id: str, q: str = "", page:
     png = pix.tobytes("png")
     doc.close()
     return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
-
-
-@router.post("/rfx/{rfx_id}/review/{vendor_id}/{line_no}", response_class=HTMLResponse)
-def review(request: Request, rfx_id: str, vendor_id: str, line_no: int, action: str = Form(...), value_inr: str = Form(""), note: str = Form("")):
-    state = load_or_404(rfx_id)
-    vendor = _vendor(state, vendor_id)
-    if action not in ("accept", "override", "clear"):
-        return error_fragment("Unknown action", 400)
-    state["reviews"] = [r for r in state.get("reviews", []) if not (r["vendor_id"] == vendor_id and r["line_no"] == line_no)]
-    if action != "clear":
-        val = None
-        if action == "accept":
-            cmp = engine.build_comparison({**state, "reviews": []})
-            cell = next(ln for ln in cmp["lines"] if ln["line_no"] == line_no)["cells"].get(vendor_id, {})
-            if cell.get("unit_inr") is None:
-                return error_fragment("This cell has no per-piece price to accept. Use 'Override' with the confirmed INR value, or leave it excluded.", 400)
-        if action == "override":
-            try:
-                val = float(value_inr.replace(",", ""))
-            except ValueError:
-                return error_fragment("Enter a numeric INR per-piece value to override.", 400)
-        if not note.strip():
-            return error_fragment("A note is required so the audit log explains the decision.", 400)
-        state["reviews"].append({"vendor_id": vendor_id, "vendor_name": vendor["name"], "line_no": line_no, "action": action, "value_inr": val, "note": note.strip(), "at": now_iso()})
-        from core import scenario as _scenario
-        _scenario.append_buyer_review_log(state, {"source": "evidence", "vendor_id": vendor_id, "vendor_name": vendor["name"], "line_no": line_no, "action": action, "value_inr": val, "note": note.strip()})
-        reason = "review_accepted" if action == "accept" else "review_overridden"
-        snapshots.bump_vendor_data_version(state, reason, affected_vendor_ids=[vendor_id])
-    else:
-        snapshots.bump_vendor_data_version(state, "review_cleared", affected_vendor_ids=[vendor_id])
-    storage.save_state(rfx_id, state)
-    resp = HTMLResponse("")
-    resp.headers["HX-Refresh"] = "true"
-    return resp
 
 
 @router.get("/rfx/{rfx_id}/vendor/{vendor_id}/questionnaire", response_class=HTMLResponse)

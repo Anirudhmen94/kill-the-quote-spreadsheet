@@ -6,8 +6,9 @@
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">Exceptions {{ tip("Messy prices and gate fails that block a clean award. Override yourself or send to a manager (stubbed).", aria="Exceptions help", width="w-60") }}</h1>
     <p class="mt-1 text-sm text-slate-600">
-      Messy cells and gate Fail/Partial knockouts that block a clean award.
-      Override with a note, or send to a manager for approval. Approved overrides apply like buyer overrides.
+      Flagged anomalies and gate Fail/Partial knockouts. Override (apply into decision),
+      send for manager approval, or deny (close without applying a value into award totals).
+      Pending shows Approve/Reject only. Resolved includes overridden, approved, and denied.
     </p>
   </div>
   <div class="flex flex-wrap gap-2 text-xs">
@@ -24,7 +25,7 @@
       Pending ({{ counts.pending }})
     </a>
     <a href="/rfx/{{ state.id }}/exceptions?status=resolved"
-       title="Overridden, approved, or otherwise cleared."
+       title="Overridden, approved, or denied."
        class="rounded-full px-3 py-1 border {% if filter_status=='resolved' %}bg-slate-900 text-white border-slate-900{% else %}bg-white text-slate-700 border-slate-300{% endif %}">
       Resolved ({{ counts.resolved }})
     </a>
@@ -59,6 +60,7 @@
             {% if item.status == 'open' %}bg-amber-50 text-amber-900 border-amber-200
             {% elif item.status == 'pending_approval' %}bg-sky-50 text-sky-900 border-sky-200
             {% elif item.status in ('overridden','approved') %}bg-emerald-50 text-emerald-900 border-emerald-200
+            {% elif item.status == 'denied' %}bg-slate-100 text-slate-700 border-slate-300
             {% else %}bg-slate-50 text-slate-700 border-slate-200{% endif %}">{{ item.status.replace('_',' ') }}</span>
           {% if item.vendor_name %}<span class="text-slate-600">{{ item.vendor_name }}</span>{% endif %}
           {% if item.line_no %}<span class="text-slate-500">· L{{ item.line_no }}</span>{% endif %}
@@ -78,7 +80,7 @@
           <input name="note" required placeholder="Override note (required)"
                  class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
           <button class="w-full rounded bg-slate-900 text-white px-2 py-1.5 hover:bg-slate-800"
-            title="Accept this cell/gate with your note. Cleared items feed back into Compare and Award.">Override</button>
+            title="Apply into the decision and review log. Cleared items feed back into Compare and Award.">Override</button>
         </form>
         <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ item.key }}/request-approval" class="space-y-1 border-t border-slate-100 pt-2">
           <input name="note" required placeholder="Why manager approval is needed"
@@ -90,7 +92,13 @@
                    class="w-1/2 rounded border border-slate-300 px-2 py-1 text-xs">
           </div>
           <button class="w-full rounded border border-slate-300 bg-white px-2 py-1.5 hover:bg-slate-50"
-            title="Stub a manager approval request. Use Approve/Reject below to simulate their decision.">Send for approval</button>
+            title="Stub a manager approval request (outbox). Pending shows Approve/Reject only.">Send for approval</button>
+        </form>
+        <form method="post" action="/rfx/{{ state.id }}/exceptions/{{ item.key }}/deny" class="space-y-1 border-t border-slate-100 pt-2">
+          <input name="note" required placeholder="Deny reason (required)"
+                 class="w-full rounded border border-slate-300 px-2 py-1 text-xs">
+          <button class="w-full rounded border border-rose-300 text-rose-800 bg-white px-2 py-1.5 hover:bg-rose-50"
+            title="Close without applying an override. Value stays out of award totals; audited under Resolved.">Deny</button>
         </form>
         {% elif item.status == 'pending_approval' %}
         <div class="text-slate-500 mb-1">Simulate manager decision</div>

@@ -291,9 +291,10 @@ def build_comparison(state: dict) -> dict:
                     if cell["status"] in USABLE:
                         cell["status"] = "needs_review"
             r = reviews.get((v["vendor_id"], li["line_no"]))
-            if r:
+            # Only applied reviews (override/accept) re-enter totals; deny stays out
+            if r and r.get("action") not in ("deny", "request_approval", "reject"):
                 cell["review"] = r
-                if r["action"] == "override" and r.get("value_inr") is not None:
+                if r.get("action") in ("override", "accept", "approved") and r.get("value_inr") is not None:
                     cell["unit_inr"] = float(r["value_inr"])
                 cell["status"] = "reviewed"
             cells[v["vendor_id"]] = cell

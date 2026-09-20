@@ -1,11 +1,12 @@
 """Exception workflows for messy cells and gate Fail/Partial knockouts.
 
 Open exceptions are derived from awardability blockers + gate Fail/Partial
-(SSOT). Persisted overrides / approval requests live in state["exceptions"].
+(SSOT). Persisted overrides / approval / deny decisions live in state["exceptions"].
 
-Cell overrides also write state["reviews"] so Compare/Award treat the cell as
-reviewed. Gate overrides are consulted by gates.evaluate_gates via
-cleared_knockouts().
+Cell overrides (and manager approvals) also write state["reviews"] so
+Compare/Award treat the cell as reviewed. Deny closes without writing reviews
+or putting a value into award totals. Gate overrides/approvals are consulted by
+gates.evaluate_gates via cleared_knockouts(); deny does not clear knockouts.
 """
 from __future__ import annotations
 
@@ -17,7 +18,9 @@ from .gates import evaluate_gates
 
 OPEN_STATUSES = {"open", "rejected"}
 PENDING_STATUSES = {"pending_approval"}
-RESOLVED_STATUSES = {"overridden", "approved"}
+# Denied closes the workflow without applying a value into totals / gates.
+CLEARED_STATUSES = {"overridden", "approved"}
+RESOLVED_STATUSES = {"overridden", "approved", "denied"}
 
 
 def _now() -> str:
@@ -220,7 +223,7 @@ def list_exceptions(state: dict, filter_status: str | None = None) -> list[dict]
     if filter_status == "affects_current_recommendation":
         items = [i for i in items if i.get("affects_current_recommendation")]
 
-    order = {"open": 0, "rejected": 0, "pending_approval": 1, "overridden": 2, "approved": 2}
+    order = {"open": 0, "rejected": 0, "pending_approval": 1, "overridden": 2, "approved": 2, "denied": 2}
     items.sort(
         key=lambda i: (
             order.get(i.get("status") or "open", 9),
@@ -262,7 +265,7 @@ def cleared_knockouts(state: dict) -> set[tuple[str, str]]:
     ensure_exceptions(state)
     out: set[tuple[str, str]] = set()
     for e in state["exceptions"]:
-        if e.get("status") not in RESOLVED_STATUSES:
+        if e.get("status") not in CLEARED_STATUSES:
             continue
         if e.get("kind") not in ("gate_fail", "gate_partial"):
             continue
@@ -516,6 +519,53 @@ def reject_exception(state: dict, key: str, note: str = "") -> dict:
     _upsert(state, record)
     return record
 
+
+
+
+def deny_exception(state: dict, key: str, note: str) -> dict:
+    """Close an anomaly without applying an override into award totals.
+
+    Persists status=denied under Resolved. Does not write reviews, does not
+    clear gate knockouts, and does not put a value into award totals.
+    """
+    note = (note or "").strip()
+    if not note:
+        raise ValueError("A note is required to deny an exception.")
+    derived = _find_derived(state, key)
+    persisted = _persisted_by_key(state).get(key)
+    base = derived or persisted
+    if not base:
+        raise ValueError("Exception not found.")
+    if (persisted or {}).get("status") == "pending_approval":
+        raise ValueError("This exception is pending manager approval. Approve or reject it first.")
+
+    record = {
+        **_base_fields(base),
+        "id": (persisted or {}).get("id") or _eid(),
+        "status": "denied",
+        "note": note,
+        "manager_name": "",
+        "manager_email": "",
+        "created_at": (persisted or {}).get("created_at") or _now(),
+        "resolved_at": _now(),
+        "approval_note": "",
+    }
+    _upsert(state, record)
+    scenario.append_buyer_review_log(
+        state,
+        {
+            "source": "exceptions",
+            "vendor_id": record.get("vendor_id"),
+            "vendor_name": record.get("vendor_name"),
+            "line_no": record.get("line_no"),
+            "action": "deny",
+            "note": note,
+            "exception_key": record.get("key"),
+        },
+    )
+    vids = [record["vendor_id"]] if record.get("vendor_id") else []
+    snapshots.bump_vendor_data_version(state, "review_denied", affected_vendor_ids=vids)
+    return record
 
 def counts_by_class(state: dict) -> dict:
     items = list_exceptions(state)

@@ -68,26 +68,16 @@
   <div class="text-xs text-slate-600">Model's candidate lines for this row: {{ cell.candidates|join(', ') }}</div>
   {% endif %}
 
-  {% if cell.status not in ('missing','not_extracted') %}
-  <section class="rounded-lg border border-slate-200 p-3">
-    <h3 class="font-medium">Buyer review</h3>
-    {% if cell.review %}
-      <div class="mt-1 text-xs rounded bg-violet-50 text-violet-900 p-2">
-        <strong>{{ cell.review.action|capitalize }}</strong>{% if cell.review.value_inr is not none %} → ₹{{ cell.review.value_inr }}/pc{% endif %} · {{ cell.review.at[:16].replace('T',' ') }} UTC<br>{{ cell.review.note }}
-      </div>
-      <form hx-post="/rfx/{{ state.id }}/review/{{ v.vendor_id }}/{{ line.line_no }}" hx-target="#review-msg" class="mt-2"><input type="hidden" name="action" value="clear"><button class="text-xs underline text-slate-600">Clear this review</button></form>
-    {% else %}
-      <p class="mt-1 text-xs text-slate-600">Accept the value as usable, or override it with a per-piece INR figure. Both are logged with your note and exported.</p>
-      <form hx-post="/rfx/{{ state.id }}/review/{{ v.vendor_id }}/{{ line.line_no }}" hx-target="#review-msg" class="mt-2 space-y-2 text-xs">
-        <div class="flex flex-wrap gap-3">
-          <label class="inline-flex items-center gap-1"><input type="radio" name="action" value="accept" checked> Accept as usable</label>
-          <label class="inline-flex items-center gap-1"><input type="radio" name="action" value="override"> Override with ₹ <input name="value_inr" class="w-24 rounded border border-slate-300 px-1 py-0.5" placeholder="per pc"></label>
-        </div>
-        <input name="note" required class="w-full rounded border border-slate-300 px-2 py-1" placeholder="Note for the audit log (required), e.g. 'Confirmed by vendor on call 19 Sep'">
-        <button class="rounded bg-slate-900 text-white px-3 py-1.5">Save review</button>
-      </form>
-    {% endif %}
-    <div id="review-msg" class="mt-2"></div>
-  </section>
+  {% if cell.status in ('needs_review', 'unresolved') %}
+  <p class="text-xs text-slate-500">
+    Flagged cells are resolved on
+    <a href="/rfx/{{ state.id }}/exceptions" class="underline hover:text-slate-800">Exceptions</a>
+    — this drawer is read-only evidence.
+  </p>
+  {% elif cell.review %}
+  <div class="text-xs rounded bg-violet-50 text-violet-900 p-2">
+    Reviewed via Exceptions · <strong>{{ cell.review.action }}</strong>{% if cell.review.value_inr is not none %} → ₹{{ cell.review.value_inr }}/pc{% endif %}
+    {% if cell.review.note %}<div class="mt-0.5 opacity-80">{{ cell.review.note }}</div>{% endif %}
+  </div>
   {% endif %}
 {% include "partials/drawer_close.html" %}

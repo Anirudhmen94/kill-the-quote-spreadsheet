@@ -1,4 +1,4 @@
-"""Exceptions tab: open blockers/gates, override, manager approval."""
+"""Exceptions tab: open blockers/gates, override, deny, manager approval."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, Request
@@ -80,3 +80,15 @@ def reject(request: Request, rfx_id: str, key: str, note: str = Form("")):
         return error_fragment(str(e), 400)
     storage.save_state(rfx_id, state)
     return RedirectResponse(f"/rfx/{rfx_id}/exceptions?status=open", status_code=303)
+
+
+@router.post("/rfx/{rfx_id}/exceptions/{key:path}/deny", response_class=HTMLResponse)
+def deny(request: Request, rfx_id: str, key: str, note: str = Form("")):
+    state = load_or_404(rfx_id)
+    try:
+        exc.deny_exception(state, key, note)
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/exceptions?status=resolved", status_code=303)
+

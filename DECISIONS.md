@@ -14,7 +14,7 @@
 
 **Freeze before you defend.** Award freeze locks strategy, line awards, totals, notices and regrets to a calculation snapshot. Later re-reads or exception overrides make that freeze historical so an old memo cannot sit next to new totals.
 
-**Exceptions are a workflow, not a colour.** Needs-review / unresolved / gate failures open on an Exceptions tab: buyer override, or send to a manager for stubbed approval. Approved clears feed back into gates and reviews.
+**Compare vs Exceptions.** Compare is five-vendor comparison only (matrix, colours, read-only evidence, gates as badges). Exceptions owns flagged anomalies: Override (apply into decision), Send for approval (pending + stub outbox), or Deny (close without putting a value into award totals). Pending is Approve/Reject only; Resolved includes overridden, approved, and denied.
 
 **Email is the channel, stubbed on purpose.** Outbound RFx, clarifications (editable drafts), award/regret notices, and internal stakeholder alerts all land in Outbox with no real SMTP — per the brief’s “stub the plumbing, don’t fake the AI loops.”
 

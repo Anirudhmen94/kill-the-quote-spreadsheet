@@ -897,8 +897,17 @@ def validate_narrative_vs_engine(answer_text: str, result: AwardScenarioResult) 
     }
 
 
+# Actions that apply a price into Compare/Award totals via state["reviews"].
+# Deny / request_approval / reject are audit-only and must not re-enter totals.
+_REVIEW_APPLY_ACTIONS = frozenset({"override", "accept", "approved"})
+
+
 def append_buyer_review_log(state: dict, entry: dict) -> dict:
-    """Unified buyer review log (evidence override, exceptions override, approvals)."""
+    """Unified buyer review log (exceptions override/deny, approvals, etc.).
+
+    Always appends to buyer_review_log. Only override/accept/approved sync into
+    state["reviews"] (so Compare totals re-enter). Deny closes without applying.
+    """
     from datetime import datetime, timezone
 
     state.setdefault("buyer_review_log", [])
@@ -915,8 +924,18 @@ def append_buyer_review_log(state: dict, entry: dict) -> dict:
         "exception_key": entry.get("exception_key"),
     }
     state["buyer_review_log"].append(row)
-    # Keep reviews in sync so Compare totals re-enter
-    if row["vendor_id"] and row["line_no"] is not None:
+    if (
+        row["vendor_id"]
+        and row["line_no"] is not None
+        and row["action"] in _REVIEW_APPLY_ACTIONS
+    ):
+        # Preserve value_inr already written by exceptions._apply_cell_review
+        prior_val = None
+        for r in state["reviews"]:
+            if r.get("vendor_id") == row["vendor_id"] and r.get("line_no") == row["line_no"]:
+                prior_val = r.get("value_inr")
+                break
+        value = row["value_inr"] if row["value_inr"] is not None else prior_val
         state["reviews"] = [
             r
             for r in state["reviews"]
@@ -927,8 +946,8 @@ def append_buyer_review_log(state: dict, entry: dict) -> dict:
                 "vendor_id": row["vendor_id"],
                 "vendor_name": row["vendor_name"],
                 "line_no": row["line_no"],
-                "action": row["action"],
-                "value_inr": row["value_inr"],
+                "action": row["action"] if row["action"] != "approved" else "override",
+                "value_inr": value,
                 "note": row["note"],
                 "at": row["at"],
                 "via": row["source"],
