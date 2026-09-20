@@ -21,6 +21,15 @@ app.include_router(compare.router)
 app.include_router(ask.router)
 
 
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Surface the failure in the page (HTMX fragments included) instead of a bare 500."""
+    import traceback
+
+    tb = traceback.format_exc(limit=3)
+    return error_fragment(f"{type(exc).__name__}: {exc}<pre class='mt-2 text-xs whitespace-pre-wrap'>{tb[-1200:]}</pre>", 500)
+
+
 # ---------------------------------------------------------------------------
 # Home / Brief
 # ---------------------------------------------------------------------------

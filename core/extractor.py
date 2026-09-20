@@ -130,6 +130,16 @@ def _content_blocks(vendor: dict, rfx: dict, get_bytes) -> list[dict]:
 # Grounding
 # ---------------------------------------------------------------------------
 
+_ANCHOR_RE = re.compile(r"\[[^\]]{1,40}\]")
+_SEP_RE = re.compile(r"[|\u00b7;:,]+")
+
+
+def _canon(text: str) -> str:
+    """Anchor tags removed, separators and whitespace collapsed: lets a snippet that spans
+    several anchored lines (a table row read across cells) still be matched verbatim."""
+    return ingest.normalize_ws(_SEP_RE.sub(" ", _ANCHOR_RE.sub(" ", text or "")))
+
+
 def _find_snippet(snippet: str, texts: dict[str, str]) -> tuple[bool, str | None, float]:
     """Return (verified, file_id, score). Exact normalized substring first, then fuzzy window match."""
     s = ingest.normalize_ws(snippet)
@@ -138,6 +148,11 @@ def _find_snippet(snippet: str, texts: dict[str, str]) -> tuple[bool, str | None
     for fid, txt in texts.items():
         if s in ingest.normalize_ws(txt):
             return True, fid, 1.0
+    sc = _canon(snippet)
+    if len(sc) >= 3:
+        for fid, txt in texts.items():
+            if sc in _canon(txt):
+                return True, fid, 0.99
     # fuzzy: compare against each line of each file (anchored lines are short)
     best = (0.0, None)
     for fid, txt in texts.items():

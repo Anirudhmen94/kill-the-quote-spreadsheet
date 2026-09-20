@@ -75,18 +75,47 @@ def csv_to_text(data: bytes) -> str:
     return "\n".join(f"[row {i}] {line}" for i, line in enumerate(text.splitlines(), start=1) if line.strip())
 
 
+def _pdf_page_rows(page, y_tol: float = 3.0) -> list[str]:
+    """Rebuild visual rows from positioned words so table cells on one line stay on one line.
+
+    pymupdf's plain text mode emits each table cell as its own line; grouping words by their
+    vertical position gives the model (and the evidence check) the row a human would read.
+    """
+    words = page.get_text("words")  # x0, y0, x1, y1, word, block, line, wordno
+    if not words:
+        return []
+    words.sort(key=lambda w: (round(w[1] / y_tol), w[0]))
+    rows: list[list] = []
+    for w in words:
+        if rows and abs(rows[-1][0][1] - w[1]) <= y_tol:
+            rows[-1].append(w)
+        else:
+            rows.append([w])
+    out = []
+    for r in rows:
+        r.sort(key=lambda w: w[0])
+        parts = []
+        prev_x1 = None
+        for w in r:
+            gap = (w[0] - prev_x1) if prev_x1 is not None else 0
+            parts.append(("  " if gap > 12 else " ") + w[4] if parts else w[4])
+            prev_x1 = w[2]
+        out.append("".join(parts).strip())
+    return out
+
+
 def pdf_to_text(data: bytes) -> tuple[str, bool]:
     """Returns (text, has_text_layer)."""
     doc = pymupdf.open(stream=data, filetype="pdf")
     out = []
     total = 0
     for i, page in enumerate(doc, start=1):
-        txt = page.get_text("text")
-        total += len(txt.strip())
+        rows = _pdf_page_rows(page)
+        total += sum(len(r) for r in rows)
         out.append(f"=== [page {i}] ===")
-        for line in txt.splitlines():
+        for line in rows:
             if line.strip():
-                out.append(f"[page {i}] {line.rstrip()}")
+                out.append(f"[page {i}] {line}")
     doc.close()
     return "\n".join(out), total > 40
 
