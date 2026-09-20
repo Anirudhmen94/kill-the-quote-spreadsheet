@@ -38,6 +38,15 @@ class AINotConfigured(RuntimeError):
     pass
 
 
+class StructuredOutputError(RuntimeError):
+    """Schema/tool validation failed after retry. technical holds the dump; str() is buyer-safe."""
+
+    def __init__(self, technical: str | None = None):
+        self.technical = (technical or "")[:4000]
+        super().__init__("Structured output failed after retry")
+
+
+
 def is_configured() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY")) and anthropic is not None
 
@@ -170,7 +179,7 @@ def structured(
             messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use.id, "content": feedback, "is_error": True}]})
         else:
             messages.append({"role": "user", "content": [text_block(feedback)]})
-    raise RuntimeError(f"Structured output failed after retry: {last_error}")
+    raise StructuredOutputError(last_error)
 
 
 def agent_loop(

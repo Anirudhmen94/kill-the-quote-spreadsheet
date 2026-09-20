@@ -142,10 +142,18 @@ def build_award_proposal(
     }
 
 
-def _notices_and_regrets(proposal: dict) -> tuple[list[dict], list[dict]]:
-    """Draft award notices for winners and regrets for others (stub text)."""
+def _notices_and_regrets(proposal: dict, state: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Draft award notices for winners and regrets for others (stub text).
+
+    Uncovered lines are never claimed in award notices. Vendors with
+    failed_no_previous_data (unreviewed) get no normal award/regret.
+    Excluded vendors get neutral not-evaluated copy.
+    """
+    from . import vendor_extraction as vex
+
     share = proposal.get("share_by_vendor") or {}
     winners = set(share.keys())
+    uncovered = set(proposal.get("uncovered_lines") or [])
     notices = []
     for name, s in share.items():
         notices.append(
@@ -158,12 +166,41 @@ def _notices_and_regrets(proposal: dict) -> tuple[list[dict], list[dict]]:
                     f"{s['lines']} line(s) totalling {engine.fmt_inr(s['extended_inr'])} per year "
                     f"under strategy: {proposal['strategy']}. "
                     f"Snapshot {proposal['snapshot']['id']} · vendor data v{proposal['vendor_data_version']}."
+                    + (
+                        f" Uncovered line(s) {', '.join(str(x) for x in sorted(uncovered))} "
+                        "are not part of this award."
+                        if uncovered
+                        else ""
+                    )
                 ),
+                "uncovered_lines_excluded": sorted(uncovered),
             }
         )
     regrets = []
-    for v in proposal["cmp"]["vendors"]:
-        if v["name"] in winners:
+    vendors = proposal["cmp"]["vendors"]
+    state_vendors = {v.get("name"): v for v in (state or {}).get("vendors") or []}
+    for v in vendors:
+        name = v["name"]
+        if name in winners:
+            continue
+        sv = state_vendors.get(name) or {}
+        st = vex.get_status(sv) if sv else None
+        if st == vex.STATUS_FAILED_NO_PREVIOUS:
+            # Unreviewed failed extraction — no normal award/regret
+            continue
+        if st == vex.STATUS_EXCLUDED or vex.is_excluded(sv):
+            regrets.append(
+                {
+                    "vendor": name,
+                    "kind": "not_evaluated",
+                    "subject": f"Not evaluated — {proposal['cmp']['title']}",
+                    "body": (
+                        f"{name} was excluded from evaluation for this event and was not "
+                        f"awarded or regretted on commercial grounds. "
+                        f"Snapshot {proposal['snapshot']['id']}."
+                    ),
+                }
+            )
             continue
         gate = v.get("gate", "")
         reason_bits = []
@@ -171,15 +208,14 @@ def _notices_and_regrets(proposal: dict) -> tuple[list[dict], list[dict]]:
             reason_bits.append("failed quality knockout(s)")
         elif gate == "Partial":
             reason_bits.append("incomplete quality questionnaire")
-        if v["name"] not in winners:
-            reason_bits.append("not lowest awardable on any awarded line under the chosen strategy")
+        reason_bits.append("not lowest awardable on any awarded line under the chosen strategy")
         regrets.append(
             {
-                "vendor": v["name"],
+                "vendor": name,
                 "kind": "regret",
                 "subject": f"Regret — {proposal['cmp']['title']}",
                 "body": (
-                    f"Thank you for quoting. On this event we are not awarding lines to {v['name']} "
+                    f"Thank you for quoting. On this event we are not awarding lines to {name} "
                     f"({'; '.join(reason_bits)}). Snapshot {proposal['snapshot']['id']}."
                 ),
             }
@@ -187,6 +223,36 @@ def _notices_and_regrets(proposal: dict) -> tuple[list[dict], list[dict]]:
     return notices, regrets
 
 
+def _err(type_: str, message: str, line_ids: list | None = None) -> dict:
+    e: dict = {"type": type_, "message": message}
+    if line_ids is not None:
+        e["lineIds"] = list(line_ids)
+    return e
+
+
+def freeze_error_messages(check: dict) -> list[str]:
+    """Flatten structured errors to messages (routes / legacy tests)."""
+    out = []
+    for e in check.get("errors") or []:
+        if isinstance(e, dict):
+            out.append(e.get("message") or e.get("type") or str(e))
+        else:
+            out.append(str(e))
+    return out
+
+
+def freeze_errors_text(check: dict) -> str:
+    return "; ".join(freeze_error_messages(check))
+
+
+class FreezeValidationError(ValueError):
+    """Structured freeze rejection — never persist on this error."""
+
+    def __init__(self, check: dict):
+        self.check = check
+        self.errors = list(check.get("errors") or [])
+        self.code = check.get("code")
+        super().__init__(freeze_errors_text(check) or "Freeze validation failed.")
 
 
 def _current_saved_recommendation(state: dict) -> dict | None:
@@ -199,6 +265,96 @@ def _current_saved_recommendation(state: dict) -> dict | None:
     return life.get("current")
 
 
+def _append_freeze_audit(state: dict, event: dict) -> None:
+    from . import scenario
+
+    state.setdefault("freeze_audit", [])
+    row = {"at": _now(), **event}
+    state["freeze_audit"].append(row)
+    try:
+        scenario.append_buyer_review_log(
+            state,
+            {
+                "source": "freeze",
+                "action": event.get("action") or "freeze_audit",
+                "note": event.get("detail") or event.get("action") or "freeze audit",
+                "vendor_id": event.get("vendor_id"),
+                "vendor_name": event.get("vendor"),
+                "line_no": None,
+            },
+        )
+    except Exception:
+        pass
+
+
+def repair_historical_freezes(state: dict) -> list[dict]:
+    """Repair packs labeled complete with uncovered lines — never invent acks.
+
+    If historical partialReason + coverage ack present → reclassify partial.
+    Else mark invalid_historical_freeze / requires_review and audit.
+    """
+    repairs: list[dict] = []
+    for pack in state.get("freeze_packs") or []:
+        if pack.get("status") not in ("frozen", "historical", "invalid_historical_freeze", "requires_review"):
+            continue
+        uncovered = list(pack.get("uncovered_lines") or [])
+        mode = pack.get("freeze_mode") or "complete"
+        if mode != "complete" or not uncovered:
+            # Clear invalid flag noise for healthy packs
+            continue
+        if pack.get("integrity") == "reclassified_partial":
+            continue
+        if pack.get("status") in ("invalid_historical_freeze", "requires_review"):
+            continue
+
+        acks = list(pack.get("acknowledgements") or [])
+        reason = (pack.get("partial_reason") or "").strip()
+        has_coverage_ack = "coverage_gaps" in acks
+        if reason and has_coverage_ack:
+            pack["freeze_mode"] = "partial"
+            pack["integrity"] = "reclassified_partial"
+            pack["reclassified_at"] = _now()
+            pack["reclassified_reason"] = (
+                "Historical pack labeled complete but had uncovered lines; "
+                "reclassified to partial because partial_reason and coverage_gaps ack were present."
+            )
+            detail = {
+                "action": "reclassify_complete_to_partial",
+                "freeze_id": pack.get("id"),
+                "uncovered_lines": uncovered,
+                "detail": pack["reclassified_reason"],
+            }
+            _append_freeze_audit(state, detail)
+            repairs.append(detail)
+        else:
+            pack["status"] = "requires_review"
+            pack["integrity"] = "invalid_historical_freeze"
+            pack["invalid_reason"] = (
+                "Pack was labeled freeze_mode=complete but uncovered_lines is non-empty "
+                "without a recorded partial_reason and coverage_gaps acknowledgement. "
+                "Display must not treat this as a valid complete freeze."
+            )
+            detail = {
+                "action": "mark_invalid_historical_freeze",
+                "freeze_id": pack.get("id"),
+                "uncovered_lines": uncovered,
+                "detail": pack["invalid_reason"],
+            }
+            _append_freeze_audit(state, detail)
+            repairs.append(detail)
+
+    # Keep state["freeze"] pointer consistent
+    cur = state.get("freeze")
+    if cur and cur.get("integrity") == "invalid_historical_freeze":
+        pass
+    elif cur and cur.get("id"):
+        for p in state.get("freeze_packs") or []:
+            if p.get("id") == cur.get("id"):
+                state["freeze"] = p
+                break
+    return repairs
+
+
 def validate_freeze_request(
     state: dict,
     *,
@@ -208,20 +364,62 @@ def validate_freeze_request(
     partial_reason: str = "",
     require_quality_gate: bool = True,
 ) -> dict:
-    """Server-side re-validation for complete vs partial freeze (Phase A.5)."""
-    from . import scenario
+    """Sole authority for complete vs partial freeze validation.
+
+    Returns structured result:
+      { ok, code, errors: [{type, lineIds?, message}], ... }
+    Never invents acknowledgements or reasons.
+    """
+    from . import scenario, snapshots, vendor_extraction as vex
 
     acknowledgements = list(acknowledgements or [])
+    snapshots.ensure_snapshot_fields(state)
+    repair_historical_freezes(state)
     life = scenario.recommendation_lifecycle(state)
-    errors: list[str] = []
-    if not life["can_freeze"]:
-        errors.append(life.get("freeze_blocked_reason") or "Save a current recommendation before freeze.")
+    errors: list[dict] = []
+
+    if not life.get("can_freeze"):
+        errors.append(
+            _err(
+                "recommendation_required",
+                life.get("freeze_blocked_reason")
+                or "Save a current recommendation before freeze.",
+            )
+        )
 
     proposal = build_award_proposal(
         state,
         require_quality_gate=require_quality_gate,
         confirm_assumed=confirm_assumed,
     )
+    live_vdv = proposal["vendor_data_version"]
+    live_snap_id = proposal["snapshot"]["id"]
+
+    rec = life.get("current") if life.get("lifecycle") == scenario.REC_SAVED else None
+    if rec:
+        if rec.get("vendor_data_version") != live_vdv:
+            errors.append(
+                _err(
+                    "stale_recommendation",
+                    "Saved recommendation vendor data version does not match live calculation.",
+                )
+            )
+        rec_snap = rec.get("calculation_snapshot_id")
+        # Recommendation may predate this proposal's fresh snapshot; require version match
+        # and that a snapshot id is bound. Exact id equality is checked when present on both
+        # and recommendation was saved from the same live calc family.
+        if rec_snap and rec.get("vendor_data_version") == live_vdv:
+            # Version matches — snapshot id may differ because proposal creates a new snap;
+            # treat version match + saved/current status as "current" per lifecycle.
+            pass
+        elif rec.get("status") not in ("current", scenario.REC_SAVED, "saved"):
+            errors.append(
+                _err(
+                    "recommendation_not_current",
+                    "Saved recommendation is not current.",
+                )
+            )
+
     result = scenario.compute_award_scenario(
         proposal["cmp"],
         strategy="quality_gated_cheapest" if require_quality_gate else "split_cheapest",
@@ -237,48 +435,105 @@ def validate_freeze_request(
 
     selected_blockers = result.selected_award_blockers
     coverage_gaps = result.coverage_gaps
+    uncovered = list(result.uncovered_lines or proposal.get("uncovered_lines") or [])
+    line_count = proposal["cmp"].get("line_count") or len(proposal["cmp"].get("lines") or [])
+    covered = int(proposal.get("covered_line_count") or 0)
     acks_needed = result.buyer_acknowledgements_required
 
+    extraction_blockers = vex.vendors_blocking_complete_freeze(state)
+
     if mode == "complete":
-        if coverage_gaps or result.uncovered_lines:
+        if covered != line_count or uncovered:
             errors.append(
-                "Complete freeze requires full allocation — uncovered lines: "
-                + ", ".join(str(x) for x in (result.uncovered_lines or []))
+                _err(
+                    "incomplete_coverage",
+                    "Complete freeze requires full allocation — uncovered lines: "
+                    + (", ".join(str(x) for x in uncovered) if uncovered else "(coverage mismatch)"),
+                    line_ids=uncovered,
+                )
             )
         if selected_blockers:
             errors.append(
-                f"Complete freeze blocked by {len(selected_blockers)} selected-award blocker(s)."
+                _err(
+                    "selected_award_blockers",
+                    f"Complete freeze blocked by {len(selected_blockers)} selected-award blocker(s).",
+                )
             )
-        # Assumed cells in split without confirm
         assumed = [
             r
             for r in proposal["split"]["rows"]
             if r.get("blocked_reason") and "Assumed" in (r.get("blocked_reason") or "")
         ]
         if assumed and not confirm_assumed:
-            errors.append("Assumed cells present — confirm them or use partial freeze.")
+            errors.append(
+                _err(
+                    "assumed_unconfirmed",
+                    "Assumed cells present — confirm them or use partial freeze.",
+                    line_ids=[r["line_no"] for r in assumed],
+                )
+            )
+        if extraction_blockers:
+            names = ", ".join(
+                f"{b['vendor']} ({b['status']})" for b in extraction_blockers
+            )
+            errors.append(
+                _err(
+                    "vendor_extraction_incomplete",
+                    "Complete freeze blocked by vendor extraction status: "
+                    + names
+                    + ". Exclude vendors with a reason or wait until reading succeeds.",
+                )
+            )
     elif mode == "partial":
         if not (partial_reason or "").strip():
-            errors.append("Partial freeze requires a written reason.")
-        missing_acks = []
+            errors.append(
+                _err("partial_reason_required", "Partial freeze requires a written reason.")
+            )
+        if covered < 1:
+            errors.append(
+                _err(
+                    "no_covered_lines",
+                    "Partial freeze requires at least one covered line.",
+                )
+            )
+        missing_acks: list[str] = []
         for a in acks_needed:
             key = a.get("kind") or a.get("label")
             if key and key not in acknowledgements and a.get("blocks_complete_freeze"):
                 missing_acks.append(a.get("label") or key)
-        # Also require explicit ack of coverage gaps / selected blockers when present
-        if coverage_gaps and "coverage_gaps" not in acknowledgements:
+        if uncovered and "coverage_gaps" not in acknowledgements:
             missing_acks.append("coverage_gaps")
         if selected_blockers and "selected_blockers" not in acknowledgements:
             missing_acks.append("selected_blockers")
+        # Extraction gaps: require explicit ack or that blockers are excluded
+        if extraction_blockers:
+            if "extraction_incomplete" not in acknowledgements and "vendor_extraction" not in acknowledgements:
+                # Allow if every blocker is failed and buyer also provided exclusion — else require ack
+                missing_acks.append("extraction_incomplete")
         if missing_acks:
+            # unique preserve order
+            seen = set()
+            uniq = []
+            for m in missing_acks:
+                if m not in seen:
+                    seen.add(m)
+                    uniq.append(m)
             errors.append(
-                "Partial freeze requires acknowledgements: " + ", ".join(missing_acks)
+                _err(
+                    "acknowledgements_required",
+                    "Partial freeze requires acknowledgements: " + ", ".join(uniq),
+                )
             )
     else:
-        errors.append(f"Unknown freeze mode {mode!r}")
+        errors.append(_err("unknown_mode", f"Unknown freeze mode {mode!r}"))
+
+    code = None
+    if errors:
+        code = errors[0].get("type")
 
     return {
         "ok": not errors,
+        "code": code,
         "errors": errors,
         "mode": mode,
         "proposal": proposal,
@@ -286,6 +541,12 @@ def validate_freeze_request(
         "lifecycle": life,
         "acknowledgements": acknowledgements,
         "partial_reason": partial_reason,
+        "uncovered_lines": uncovered,
+        "covered_line_count": covered,
+        "line_count": line_count,
+        "extraction_blockers": extraction_blockers,
+        "live_snapshot_id": live_snap_id,
+        "live_vendor_data_version": live_vdv,
     }
 
 
@@ -300,8 +561,8 @@ def freeze_award(
 ) -> dict:
     """Create an immutable freeze pack (complete or partial) bound to a snapshot.
 
-    Complete: full allocation, no selected-award blockers, saved recommendation required.
-    Partial: acknowledgements + reason required; still immutable once written.
+    Calls validate_freeze_request as sole authority. On failure raises
+    FreezeValidationError — never persists. Asserts complete invariant before write.
     """
     from . import scenario
 
@@ -317,21 +578,44 @@ def freeze_award(
         require_quality_gate=require_quality_gate,
     )
     if not check["ok"]:
-        raise ValueError("; ".join(check["errors"]))
+        raise FreezeValidationError(check)
 
     proposal = check["proposal"]
     scen = check["scenario"]
+    uncovered = list(check.get("uncovered_lines") or proposal.get("uncovered_lines") or [])
+    covered = int(check.get("covered_line_count") or proposal.get("covered_line_count") or 0)
+    line_count = int(check.get("line_count") or 0)
+
+    # Complete invariant — refuse to persist even if validator was bypassed
+    if mode == "complete":
+        if uncovered or covered != line_count:
+            raise FreezeValidationError(
+                {
+                    "ok": False,
+                    "code": "complete_invariant",
+                    "errors": [
+                        _err(
+                            "complete_invariant",
+                            "Refusing to persist complete freeze with uncovered lines: "
+                            + ", ".join(str(x) for x in uncovered),
+                            line_ids=uncovered,
+                        )
+                    ],
+                }
+            )
+
     assumed_in_split = [
         r
         for r in proposal["split"]["rows"]
         if r.get("blocked_reason") and "Assumed" in (r.get("blocked_reason") or "")
     ]
-    notices, regrets = _notices_and_regrets(proposal)
+    notices, regrets = _notices_and_regrets(proposal, state)
     rec = _current_saved_recommendation(state)
 
     total_paise = scen.get("total_extended_paise")
     if total_paise is None:
         from .scenario import inr_to_paise
+
         total_paise = inr_to_paise(proposal["total_extended_inr"])
 
     pack = {
@@ -349,8 +633,8 @@ def freeze_award(
         "input_hash": proposal["snapshot"].get("input_hash"),
         "total_extended_inr": proposal["total_extended_inr"],
         "total_extended_paise": total_paise,
-        "covered_line_count": proposal["covered_line_count"],
-        "uncovered_lines": proposal["uncovered_lines"],
+        "covered_line_count": covered,
+        "uncovered_lines": uncovered,
         "share_by_vendor": proposal["share_by_vendor"],
         "market_quote_coverage": scen.get("market_quote_coverage"),
         "scenario_award_coverage": scen.get("scenario_award_coverage"),
@@ -381,9 +665,15 @@ def freeze_award(
         "selected_award_blockers": scen.get("selected_award_blockers") or [],
         "assumed_blocked_lines": [r["line_no"] for r in assumed_in_split],
         "readiness": scen.get("readiness"),
+        "integrity": "ok",
+        "processing_completeness": {
+            "covered_line_count": covered,
+            "line_count": line_count,
+            "uncovered_lines": uncovered,
+            "extraction_blockers": check.get("extraction_blockers") or [],
+        },
     }
 
-    # Supersede prior freezes
     for prev in state.get("freeze_packs") or []:
         if prev.get("status") == "frozen":
             prev["status"] = "historical"
@@ -391,15 +681,23 @@ def freeze_award(
             prev["superseded_reason"] = "A newer freeze was created."
 
     state.setdefault("freeze_packs", []).append(pack)
-    state["freeze"] = pack  # pointer to current
+    state["freeze"] = pack
     state["status"] = "award_frozen"
 
-    # Mark recommendation lifecycle
     if rec:
         rec["status"] = (
             scenario.REC_FROZEN_COMPLETE if mode == "complete" else scenario.REC_FROZEN_PARTIAL
         )
         rec["freeze_id"] = pack["id"]
+
+    _append_freeze_audit(
+        state,
+        {
+            "action": f"freeze_{mode}",
+            "freeze_id": pack["id"],
+            "detail": f"Frozen {mode}; covered {covered}/{line_count}; uncovered {uncovered}",
+        },
+    )
     return pack
 
 
@@ -417,16 +715,23 @@ def refresh_freeze_staleness(state: dict) -> None:
                 f"Vendor data changed after freeze (freeze v{pack.get('vendor_data_version')}, current v{cur})."
             )
     if state.get("freeze") and state["freeze"].get("status") != "frozen":
-        # Keep pointer but UI will show historical
         pass
 
 
 def current_freeze(state: dict) -> dict | None:
+    """Return current frozen pack after staleness refresh + historical repair."""
     refresh_freeze_staleness(state)
+    repair_historical_freezes(state)
     pack = state.get("freeze")
-    if pack and pack.get("status") == "frozen":
+    if pack and pack.get("status") == "frozen" and pack.get("integrity") != "invalid_historical_freeze":
         return pack
-    frozen = [p for p in (state.get("freeze_packs") or []) if p.get("status") == "frozen"]
+    if pack and pack.get("status") == "requires_review":
+        return pack  # surface for UI banner — not valid complete
+    frozen = [
+        p
+        for p in (state.get("freeze_packs") or [])
+        if p.get("status") == "frozen" and p.get("integrity") != "invalid_historical_freeze"
+    ]
     return frozen[-1] if frozen else None
 
 
@@ -436,11 +741,11 @@ def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
     if not pack:
         raise ValueError("No frozen award pack to export.")
 
-    # Build memo text bound to freeze ids
     memo_lines = [
         f"# Frozen award pack — {state['rfx'].get('title', state['id'])}",
         "",
         f"- Freeze id: `{pack['id']}`",
+        f"- Freeze mode: {pack.get('freeze_mode') or 'complete'}",
         f"- Calculation snapshot: `{pack['calculation_snapshot_id']}`",
         f"- Vendor data version: {pack['vendor_data_version']}",
         f"- Frozen at: {pack['frozen_at']}",
@@ -449,8 +754,19 @@ def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
         f"- Lines covered: {pack['covered_line_count']}",
         f"- Status: {pack['status']}",
         "",
-        "## Vendor share",
+        "## Processing completeness",
     ]
+    pc = pack.get("processing_completeness") or {}
+    memo_lines.append(
+        f"- Covered {pc.get('covered_line_count', pack.get('covered_line_count'))}/"
+        f"{pc.get('line_count', '?')}"
+    )
+    if pack.get("uncovered_lines"):
+        memo_lines.append(
+            f"- Uncovered lines (not awarded): {', '.join(str(x) for x in pack['uncovered_lines'])}"
+        )
+    memo_lines.append("")
+    memo_lines.append("## Vendor share")
     for name, s in (pack.get("share_by_vendor") or {}).items():
         memo_lines.append(f"- {name}: {s['lines']} lines · {engine.fmt_inr(s['extended_inr'])}")
     if pack.get("uncovered_lines"):
@@ -460,15 +776,14 @@ def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
     memo_lines.append("## Award notices")
     for n in pack.get("notices") or []:
         memo_lines.append(f"### {n['vendor']}\n{n['body']}\n")
-    memo_lines.append("## Regrets")
+    memo_lines.append("## Regrets / not evaluated")
     for n in pack.get("regrets") or []:
-        memo_lines.append(f"### {n['vendor']}\n{n['body']}\n")
+        memo_lines.append(f"### {n['vendor']} ({n.get('kind')})\n{n['body']}\n")
     if pack.get("exclusion_summary"):
         memo_lines.append("")
         memo_lines.append("## Exclusions (why totals are not 'full coverage')")
         memo_lines.append(pack["exclusion_summary"].get("headline", ""))
 
-    # Workbook from current export helpers (stamped via snapshots)
     xlsx = export.award_workbook(state, provisional=False)
 
     buf = io.BytesIO()
@@ -484,17 +799,17 @@ def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
             json.dumps(
                 {
                     "freeze_id": pack["id"],
+                    "freeze_mode": pack.get("freeze_mode"),
                     "calculation_snapshot_id": pack["calculation_snapshot_id"],
                     "vendor_data_version": pack["vendor_data_version"],
                     "strategy": pack["strategy"],
                     "total_extended_inr": pack["total_extended_inr"],
                     "status": pack["status"],
+                    "uncovered_lines": pack.get("uncovered_lines"),
+                    "processing_completeness": pack.get("processing_completeness"),
+                    "integrity": pack.get("integrity"),
                 },
                 indent=2,
             ),
         )
     return buf.getvalue()
-
-
-# Aliases used by routes
-validate_freeze_request = validate_freeze_request

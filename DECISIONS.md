@@ -31,7 +31,7 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 2. **Email** — simulate messy replies, live parallel extract, clarifications, Outbox.  
 3. **Compare** — verified Pass-only INR/pc matrix, evidence drawer (read/link), Ask drawer, filters.  
 3b. **Anomalies** — flagged cells, gate Fail/Partial, coverage gaps, format/pricing callouts; Override / Send for approval / Deny.  
-4. **Award** — Ask-before-you-lock (premade + live), per-vendor why packs, one-click Lock (complete or auto-partial), Send stub notices, success banners.  
+4. **Award** — Ask-before-you-lock (premade + live), per-vendor why packs, one-click Lock (complete only; partial via explicit Freeze partial…), Send stub notices, success banners.  
 5. **Trust chrome** — cell states, vendor data version / snapshots, recommendation before lock, historical freeze when data moves.
 6. **Charts / exports / audit** — Compare allocation & coverage bars (engine data); Award compact share strip; workbook sheet names + freeze metadata; trust strip (freeze / notices / overrides).
 

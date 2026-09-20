@@ -253,6 +253,8 @@ def _empty_cell(status: str, reason: str) -> dict:
 
 
 def build_comparison(state: dict) -> dict:
+    from . import vendor_extraction as _vex
+
     rfx = state["rfx"]
     fx = state["fx"]
     vendors = state.get("vendors", [])
@@ -261,6 +263,12 @@ def build_comparison(state: dict) -> dict:
     for li in rfx["line_items"]:
         cells = {}
         for v in vendors:
+            if not _vex.contributes_prices(v):
+                cells[v["vendor_id"]] = _empty_cell(
+                    "not_extracted",
+                    "Excluded or extraction failed — no prices in award.",
+                )
+                continue
             ext = v.get("extraction")
             if not ext:
                 cells[v["vendor_id"]] = _empty_cell("not_extracted", "")

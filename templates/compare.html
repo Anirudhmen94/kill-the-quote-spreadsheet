@@ -62,6 +62,25 @@
 </div>
 
 {% if false and exclusion_summary %}
+{% set failed_vendors = namespace(items=[]) %}
+{% for v in state.vendors %}
+  {% set st = (v.extraction_status or {}).status or v.status %}
+  {% if st in ['failed_no_previous_data', 'failed_using_previous_version', 'error'] %}
+    {% set _ = failed_vendors.items.append(v) %}
+  {% endif %}
+{% endfor %}
+{% if failed_vendors.items %}
+<div class="mt-3 rounded-lg border border-rose-300 bg-rose-50 text-rose-950 text-sm px-3 py-2" data-testid="compare-extraction-banner">
+  <strong>Vendor reading issue.</strong>
+  {% for v in failed_vendors.items %}
+  <div class="text-xs mt-1">{{ v.name }}: {{ (v.extraction_status or {}).buyer_message or "We couldn't read this reply." }}
+    <a class="underline" href="/rfx/{{ state.id }}/email">Retry / exclude</a>
+    · <a class="underline" href="/rfx/{{ state.id }}/ai-log">Technical details</a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="mt-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-950 text-sm px-3 py-2" title="These cells are visible but never enter money totals or a freeze unless you confirm or override.">
   <strong>Excluded from every total</strong> · {{ exclusion_summary.headline }}
   <div class="text-xs mt-1 opacity-90">Assumed cells never enter a frozen award without confirm. Needs-review, unresolved, and conversion-failed cells stay visible and out of money.

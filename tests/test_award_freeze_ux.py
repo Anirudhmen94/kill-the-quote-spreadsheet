@@ -111,7 +111,8 @@ def test_freeze_still_blocked_without_saved_recommendation():
         acknowledgements=["coverage_gaps", "selected_blockers"],
     )
     assert check["ok"] is False
-    assert any("recommendation" in e.lower() or "Save" in e for e in check["errors"])
+    msgs = [e["message"] if isinstance(e, dict) else str(e) for e in check["errors"]]
+    assert any("recommendation" in e.lower() or "Save" in e for e in msgs)
 
 
 def test_freeze_blocked_human_copy():

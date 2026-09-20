@@ -394,8 +394,8 @@ async def award_use_and_lock(request: Request, rfx_id: str, idx: int):
     try:
         snapshots.save_recommendation_from_answer(state, m, idx)
         out = award_ask.lock_award(state, rationale=None)
-    except ValueError as e:
-        award_actions.push_flash(state, str(e), level="error")
+    except (ValueError, freeze.FreezeValidationError) as e:
+        award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
         storage.save_state(rfx_id, state)
         return _after()
 
@@ -415,7 +415,7 @@ async def award_use_and_lock(request: Request, rfx_id: str, idx: int):
 
 @router.post("/rfx/{rfx_id}/award/lock", response_class=HTMLResponse)
 async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
-    """One-click lock: optional save-rec → complete freeze or auto-partial."""
+    """One-click lock: optional save-rec → complete freeze only (no auto-partial)."""
     from core import award_ask
 
     state = load_or_404(rfx_id)
@@ -428,8 +428,8 @@ async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
 
     try:
         out = award_ask.lock_award(state, rationale=rationale or None)
-    except ValueError as e:
-        award_actions.push_flash(state, str(e), level="error")
+    except (ValueError, freeze.FreezeValidationError) as e:
+        award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
         storage.save_state(rfx_id, state)
         return _after()
 
@@ -574,9 +574,19 @@ def _freeze_error_flash(message: str) -> str:
         )
     elif "recommendation" in lower:
         hint = " Next: write a short rationale and save this calculation as your recommendation."
+    elif "manual freeze" in lower or "use & lock" in lower or "lock / use" in lower:
+        hint = (
+            " Next: open Freeze partial… under Manual lock, tick coverage gaps "
+            "(and selected blockers if listed), and enter a non-empty partial reason."
+        )
+    elif "extraction" in lower:
+        hint = (
+            " Next: finish reading vendor replies on Email, exclude failed vendors with a reason, "
+            "or use Freeze partial… with an extraction_incomplete acknowledgement."
+        )
     else:
         hint = (
-            " Next: use Advanced… for a partial freeze (acknowledgements + reason), "
+            " Next: use Freeze partial… (acknowledgements + reason), "
             "confirm assumed cells if needed, or resolve issues on Compare."
         )
     return msg + hint
@@ -619,7 +629,7 @@ async def freeze_award_route(
             acknowledgements=list(acks),
             partial_reason=partial_reason or "",
         )
-    except ValueError as e:
+    except (ValueError, freeze.FreezeValidationError) as e:
         award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
         storage.save_state(rfx_id, state)
         return _after_post()

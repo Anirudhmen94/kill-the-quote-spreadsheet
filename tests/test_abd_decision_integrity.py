@@ -80,7 +80,8 @@ def test_save_before_freeze():
         st, mode="partial", partial_reason="x", acknowledgements=["coverage_gaps"]
     )
     assert check["ok"] is False
-    assert any("Save" in e or "recommendation" in e.lower() for e in check["errors"])
+    msgs = [e["message"] if isinstance(e, dict) else str(e) for e in check["errors"]]
+    assert any("Save" in e or "recommendation" in e.lower() for e in msgs)
 
 
 def test_stale_on_data_change():
@@ -97,7 +98,8 @@ def test_complete_freeze_fails_incomplete():
     st = _seed()
     check = freeze.validate_freeze_request(st, mode="complete")
     assert check["ok"] is False
-    assert any("allocation" in e.lower() or "uncovered" in e.lower() for e in check["errors"])
+    msgs = [e["message"] if isinstance(e, dict) else str(e) for e in check["errors"]]
+    assert any("allocation" in e.lower() or "uncovered" in e.lower() for e in msgs)
     try:
         freeze.freeze_award(st, mode="complete")
         raise AssertionError("complete freeze should fail")

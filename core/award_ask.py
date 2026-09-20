@@ -162,7 +162,7 @@ def _narrative_biggest_risks(live: dict, packs: list[dict]) -> str:
         risks.append(
             f"**Coverage gap** — line(s) {', '.join(str(x) for x in uncovered)} have no "
             "awardable quote among Pass vendors. Complete freeze is blocked; Lock will "
-            "auto-partial if you proceed."
+            "complete freeze is blocked — use Manual freeze partial with real acknowledgements and reason."
         )
     if by_kind.get("needs_review"):
         risks.append(
@@ -283,33 +283,14 @@ def default_lock_rationale(state: dict, live: dict | None = None) -> str:
 
 
 def needed_partial_acknowledgements(state: dict) -> tuple[list[str], str]:
-    """Derive auto-partial acks + reason from complete-freeze validation."""
-    from . import freeze
+    """Deprecated: auto-invented acks are no longer used by lock_award.
 
-    check = freeze.validate_freeze_request(state, mode="complete")
-    scen = check.get("scenario") or {}
-    acks: list[str] = []
-    uncovered = scen.get("uncovered_lines") or []
-    if scen.get("coverage_gaps") or uncovered:
-        acks.append("coverage_gaps")
-    if scen.get("selected_award_blockers"):
-        acks.append("selected_blockers")
-    if uncovered:
-        reason = (
-            "Auto partial lock: uncovered line(s) "
-            f"{', '.join(str(x) for x in uncovered)} — complete freeze not possible."
-        )
-    elif scen.get("selected_award_blockers"):
-        n = len(scen["selected_award_blockers"])
-        reason = f"Auto partial lock: {n} selected-award blocker(s) acknowledged."
-    else:
-        reason = (
-            "Auto partial lock: complete freeze validation failed; "
-            "buyer acknowledgements recorded."
-        )
-    if not acks:
-        acks = ["coverage_gaps"]
-    return acks, reason
+    Kept for import compatibility; returns empty and raises if called for locking.
+    """
+    raise RuntimeError(
+        "needed_partial_acknowledgements is removed — lock_award no longer invents "
+        "partial acknowledgements. Use Manual freeze partial with explicit acks + reason."
+    )
 
 
 def lock_award(
@@ -318,7 +299,12 @@ def lock_award(
     rationale: str | None = None,
     confirm_assumed: bool = False,
 ) -> dict[str, Any]:
-    """One-click lock: optional save-rec → complete freeze, else auto-partial."""
+    """Use & lock / Lock: save recommendation if needed, then complete freeze only.
+
+    Does NOT auto-invent acknowledgements or silently freeze as partial/complete when
+    incomplete. If complete validation fails, raises FreezeValidationError instructing
+    the buyer to use Manual freeze partial with real coverage ack + reason.
+    """
     from . import freeze, scenario
 
     if not any(v.get("extraction") for v in state.get("vendors", [])):
@@ -327,43 +313,51 @@ def lock_award(
     life = scenario.recommendation_lifecycle(state)
     saved_rec = False
     if not life.get("can_freeze"):
-        text = (rationale or "").strip() or default_lock_rationale(state)
-        snapshots.save_recommendation_from_live(state, text)
+        text_r = (rationale or "").strip() or default_lock_rationale(state)
+        snapshots.save_recommendation_from_live(state, text_r)
         saved_rec = True
 
-    try:
-        pack = freeze.freeze_award(
-            state,
-            confirm_assumed=confirm_assumed,
-            require_quality_gate=True,
-            mode="complete",
+    check = freeze.validate_freeze_request(
+        state,
+        mode="complete",
+        confirm_assumed=confirm_assumed,
+        require_quality_gate=True,
+    )
+    if not check["ok"]:
+        msgs = freeze.freeze_error_messages(check)
+        detail = "; ".join(msgs)
+        uncovered = check.get("uncovered_lines") or []
+        raise freeze.FreezeValidationError(
+            {
+                **check,
+                "errors": list(check.get("errors") or [])
+                + [
+                    {
+                        "type": "use_manual_freeze_partial",
+                        "message": (
+                            "Lock / Use & lock only freezes when complete validation passes. "
+                            "This award is not complete"
+                            + (
+                                f" (uncovered line(s) {', '.join(str(x) for x in uncovered)})"
+                                if uncovered
+                                else ""
+                            )
+                            + ". Open Freeze complete / Freeze partial… under Manual lock, "
+                            "acknowledge coverage gaps (and selected blockers if any), and "
+                            "enter a non-empty partial reason — acknowledgements are never invented. "
+                            f"Blockers: {detail}"
+                        ),
+                    }
+                ],
+                "code": check.get("code") or "incomplete_for_lock",
+                "ok": False,
+            }
         )
-        return {"pack": pack, "mode": "complete", "saved_recommendation": saved_rec}
-    except ValueError:
-        pass
 
-    acks, reason = needed_partial_acknowledgements(state)
-    try:
-        pack = freeze.freeze_award(
-            state,
-            confirm_assumed=confirm_assumed,
-            require_quality_gate=True,
-            mode="partial",
-            acknowledgements=acks,
-            partial_reason=reason,
-        )
-    except ValueError:
-        # Assumed cells or similar — retry with confirm_assumed
-        pack = freeze.freeze_award(
-            state,
-            confirm_assumed=True,
-            require_quality_gate=True,
-            mode="partial",
-            acknowledgements=acks,
-            partial_reason=reason,
-        )
-    return {
-        "pack": pack,
-        "mode": pack.get("freeze_mode") or "partial",
-        "saved_recommendation": saved_rec,
-    }
+    pack = freeze.freeze_award(
+        state,
+        confirm_assumed=confirm_assumed,
+        require_quality_gate=True,
+        mode="complete",
+    )
+    return {"pack": pack, "mode": "complete", "saved_recommendation": saved_rec}

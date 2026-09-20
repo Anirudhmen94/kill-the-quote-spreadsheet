@@ -111,11 +111,11 @@ def test_award_premade_still_cached_free_ask_live_path_exists():
     assert 'hx-post="/rfx/' in page.text and "/award/ask\"" in page.text.replace("'", '"')
 
 
-def test_use_and_lock_saves_and_freezes():
+def test_use_and_lock_saves_then_refuses_incomplete():
+    """Use & lock saves the recommendation but does not invent a partial freeze."""
     st = _seed()
     _clear_recs(st)
     rid = st["id"]
-    # Seed a current chat answer via premade
     r0 = client.post(f"/rfx/{rid}/award/ask-premade", data={"prompt_id": "best_split"})
     assert r0.status_code == 200
     st1 = storage.load_state(rid)
@@ -124,24 +124,19 @@ def test_use_and_lock_saves_and_freezes():
 
     r = client.post(f"/rfx/{rid}/award/use-and-lock/{idx}", follow_redirects=False)
     assert r.status_code in (200, 302, 303)
-    # HTMX redirect header or Location
     loc = r.headers.get("location") or r.headers.get("HX-Redirect") or ""
     if r.status_code in (302, 303):
         assert "/award" in loc
-    elif r.status_code == 200:
-        assert "/award" in (r.headers.get("HX-Redirect") or r.text)
 
     st2 = storage.load_state(rid)
     rec = st2.get("recommendation")
-    assert rec, "recommendation should be saved before/during lock"
-    # After freeze, lifecycle may mark rec frozen_partial / frozen_complete
-    assert rec.get("status") in ("current", "frozen_partial", "frozen_complete", "frozen")
+    assert rec, "recommendation should be saved before lock attempt"
+    assert rec.get("status") in ("current", "saved")
     pack = st2.get("freeze") or {}
-    assert pack.get("status") == "frozen"
+    assert pack.get("status") != "frozen"
     flash = st2.get("flash") or {}
-    assert flash.get("level") == "success"
-    assert "locked" in (flash.get("message") or "").lower()
-    assert "Recommendation saved" in (flash.get("message") or "") or "recommendation" in (flash.get("message") or "").lower()
+    assert flash.get("level") == "error"
+    assert "partial" in (flash.get("message") or "").lower() or "complete" in (flash.get("message") or "").lower()
 
 
 def test_recommendation_from_award_returns_award():
@@ -175,10 +170,12 @@ def test_manual_lock_still_works():
     assert "Freeze partial" in page.text
     assert "finalize from a suggestion" in page.text.lower() or "Finalize from a suggestion" in page.text
 
+    # Lock award refuses incomplete — explicit Freeze partial still works (covered below)
     r = client.post(f"/rfx/{rid}/award/lock", data={}, follow_redirects=False)
     assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)
-    assert (st2.get("freeze") or {}).get("status") == "frozen"
+    assert (st2.get("freeze") or {}).get("status") != "frozen"
+    assert (st2.get("flash") or {}).get("level") == "error"
 
 
 def test_manual_freeze_partial_route():

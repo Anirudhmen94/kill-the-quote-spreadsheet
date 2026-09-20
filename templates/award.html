@@ -14,6 +14,25 @@
   </div>
 </div>
 
+{% set failed_vendors = namespace(items=[]) %}
+{% for v in state.vendors %}
+  {% set st = (v.extraction_status or {}).status or v.status %}
+  {% if st in ['failed_no_previous_data', 'failed_using_previous_version', 'error'] %}
+    {% set _ = failed_vendors.items.append(v) %}
+  {% endif %}
+{% endfor %}
+{% if failed_vendors.items %}
+<div class="mt-4 rounded-lg border border-rose-300 bg-rose-50 text-rose-950 px-4 py-3 text-sm" data-testid="award-extraction-banner">
+  <strong class="font-semibold">Vendor reading issue.</strong>
+  {% for v in failed_vendors.items %}
+  <div class="mt-1">{{ v.name }}: {{ (v.extraction_status or {}).buyer_message or "We couldn't read this vendor's reply." }}
+    <a class="underline ml-1" href="/rfx/{{ state.id }}/email">Retry / exclude on Email</a>
+    · <a class="underline" href="/rfx/{{ state.id }}/ai-log">View technical details</a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 {% if flash and flash.message %}
 <div class="mt-4 rounded-lg border px-4 py-4 text-base
   {% if flash.level == 'error' %}border-rose-300 bg-rose-50 text-rose-950
@@ -229,10 +248,14 @@
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="font-medium text-slate-900 inline-flex items-center gap-1.5">
             1. Manual lock / freeze
-            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Prefers a complete freeze; auto-partials when coverage blocks complete. Open Freeze complete / partial for explicit modes.", aria="Lock help", width="w-64") }}
+            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Lock only succeeds for a complete freeze. If incomplete, use Freeze partial… with explicit acknowledgements and a written reason — never auto-invented.", aria="Lock help", width="w-64") }}
           </div>
-          {% if frozen %}
-          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs">Frozen · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}{% if freeze_pack.freeze_mode %} · {{ freeze_pack.freeze_mode }}{% endif %}</span>
+          {% if freeze_pack and freeze_pack.integrity == 'invalid_historical_freeze' or (freeze_pack and freeze_pack.status == 'requires_review') %}
+          <span class="rounded bg-rose-50 text-rose-900 border border-rose-300 px-2 py-1 text-xs" data-testid="freeze-invalid-banner">Requires review — invalid historical complete freeze</span>
+          {% elif frozen and freeze_pack.freeze_mode == 'partial' %}
+          <span class="rounded bg-amber-50 text-amber-950 border border-amber-300 px-2 py-1 text-xs font-medium" data-testid="freeze-partial-banner">FROZEN PARTIAL · uncovered {{ freeze_pack.uncovered_lines|join(', ') if freeze_pack.uncovered_lines else '—' }} · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
+          {% elif frozen %}
+          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs">Frozen complete · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
           {% else %}
           <span class="rounded bg-slate-50 text-slate-700 border border-slate-200 px-2 py-1 text-xs">Not locked yet</span>
           {% endif %}
@@ -252,7 +275,7 @@
             class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:bg-slate-800"
             data-testid="award-lock-btn"
             {% if not live or not live.available %}disabled{% endif %}>Lock award</button>
-          <p class="text-xs text-slate-500">One click: save rationale if needed, then complete freeze — or auto-partial with acknowledgements when coverage blocks complete.</p>
+          <p class="text-xs text-slate-500">One click: save rationale if needed, then complete freeze only. If incomplete, use Freeze partial… below with real acknowledgements + reason.</p>
         </form>
 
         <details class="text-xs text-slate-600" data-testid="award-freeze-details">
@@ -263,7 +286,7 @@
             {% if freeze_check_complete and not freeze_check_complete.ok %}
             <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
               Complete freeze blocked:
-              <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+              <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{% if e is mapping %}{{ e.message }}{% else %}{{ e }}{% endif %}</li>{% endfor %}</ul>
             </div>
             {% endif %}
             <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">

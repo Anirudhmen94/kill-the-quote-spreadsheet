@@ -284,6 +284,11 @@ def ground(extraction: dict, vendor: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _finalize_extraction(data: dict, vendor: dict, rfx: dict, model_label: str) -> dict:
+    from . import vendor_extraction
+
+    missing = vendor_extraction.validate_extraction_payload(data)
+    if missing:
+        raise ValueError("Extraction validation failed: " + "; ".join(missing))
     data = ground(data, vendor)
     data["model"] = model_label
     data["extracted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")

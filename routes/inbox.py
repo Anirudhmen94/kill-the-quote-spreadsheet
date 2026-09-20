@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from core import clarify, demo_ops, extractor, ingest, llm, snapshots, storage, vendor_sim
+from core import clarify, demo_ops, extractor, ingest, llm, snapshots, storage, vendor_extraction, vendor_sim
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
 
 router = APIRouter()
@@ -28,6 +28,8 @@ def _vendor(state: dict, vendor_id: str) -> dict:
 @router.get("/rfx/{rfx_id}/email", response_class=HTMLResponse)
 def email_page(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
+    for v in state.get("vendors") or []:
+        vendor_extraction.normalize_legacy_vendor(v)
     return render(request, "email.html", state=state, active="email", data_status_context="inbox")
 
 
@@ -105,8 +107,7 @@ def _run_one_extract(rfx_id: str, vendor_id: str, state_snap: dict, vendor_snap:
     """LLM extract for one vendor using frozen snapshots (no shared mutable state)."""
     log: list = []
     vendor = copy.deepcopy(vendor_snap)
-    vendor["status"] = "extracting"
-    vendor["error"] = None
+    vendor_extraction.set_extracting(vendor)
     vendor["texts"] = {}
     try:
         new_ext = extractor.extract_vendor(state_snap, vendor, storage.get_bytes, log=log)
@@ -119,15 +120,62 @@ def _run_one_extract(rfx_id: str, vendor_id: str, state_snap: dict, vendor_snap:
             "error": None,
         }
     except llm.AINotConfigured as e:
-        return {"vendor_id": vendor_id, "ok": False, "error": str(e), "log": log, "ai_missing": True}
-    except Exception as e:
         return {
             "vendor_id": vendor_id,
             "ok": False,
-            "error": f"{type(e).__name__}: {e}",
+            "error": str(e),
+            "technical_error": str(e),
+            "log": log,
+            "ai_missing": True,
+        }
+    except Exception as e:
+        tech = getattr(e, "technical", None) or f"{type(e).__name__}: {e}"
+        return {
+            "vendor_id": vendor_id,
+            "ok": False,
+            "error": tech,  # technical only — never shown raw in buyer UI
+            "technical_error": tech,
             "log": log,
             "ai_missing": False,
         }
+
+
+def _apply_extract_success(state: dict, vendor: dict, res: dict, *, was_extracted: bool, prior_extraction, base_version: int | None = None) -> None:
+    vendor["extraction"] = res["extraction"]
+    vendor["texts"] = res.get("texts") or {}
+    vendor["extracted_at"] = now_iso()
+    ver = snapshots.current_version(state)
+    vendor_extraction.set_extracted(vendor, version=ver + 1)  # bump happens next
+    vendor["prior_extractions"] = vendor.get("prior_extractions") or []
+    if was_extracted and prior_extraction is not None:
+        vendor["prior_extractions"].append(
+            {
+                "at": now_iso(),
+                "extraction": prior_extraction,
+                "vendor_data_version": base_version if base_version is not None else ver,
+            }
+        )
+        if len(vendor["prior_extractions"]) > 5:
+            vendor["prior_extractions"] = vendor["prior_extractions"][-5:]
+        reason = "vendor_reprocessed"
+    else:
+        reason = "vendor_extracted"
+    snapshots.bump_vendor_data_version(
+        state,
+        reason,
+        affected_vendor_ids=[vendor["vendor_id"]],
+        affected_file_ids=[f["file_id"] for f in vendor.get("files", [])],
+    )
+    vendor_extraction.set_extracted(vendor, version=snapshots.current_version(state))
+
+
+def _apply_extract_failure(vendor: dict, technical: str, *, was_extracted: bool, prior_extraction, prior_texts) -> None:
+    if was_extracted and prior_extraction is not None:
+        vendor["extraction"] = prior_extraction
+        vendor["texts"] = prior_texts or vendor.get("texts") or {}
+        vendor_extraction.set_failed(vendor, technical=technical, had_previous=True)
+    else:
+        vendor_extraction.set_failed(vendor, technical=technical, had_previous=False)
 
 
 @router.post("/rfx/{rfx_id}/extract-all", response_class=HTMLResponse)
@@ -136,17 +184,16 @@ def extract_all(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     pending = [
         v for v in state.get("vendors", [])
-        if v.get("files") and v.get("status") not in ("extracted",)
+        if v.get("files") and v.get("status") not in ("extracted", "excluded")
+        and vendor_extraction.get_status(v) != vendor_extraction.STATUS_EXCLUDED
     ]
     if not pending:
         return hx_redirect(f"/rfx/{rfx_id}/email")
     if not llm.is_configured():
         return error_fragment("ANTHROPIC_API_KEY is not set. Extraction refuses to invent output.", 400)
 
-    # Snapshot inputs once; mark extracting so the UI can show Processing.
     for v in pending:
-        v["status"] = "extracting"
-        v["error"] = None
+        vendor_extraction.set_extracting(v)
     storage.save_state(rfx_id, state)
 
     jobs = []
@@ -172,32 +219,48 @@ def extract_all(request: Request, rfx_id: str):
         log = state.setdefault("ai_log", [])
         for res in results:
             vendor = _vendor(state, res["vendor_id"])
-            was_extracted = vendor.get("status") == "extracted" and bool(vendor.get("extraction"))
+            was_extracted = bool(vendor.get("extraction")) and vendor_extraction.get_status(vendor) in (
+                vendor_extraction.STATUS_EXTRACTED,
+                vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+            )
+            # Also treat legacy extracted
+            if vendor.get("status") == "extracted" and vendor.get("extraction"):
+                was_extracted = True
             prior_extraction = vendor.get("extraction")
             prior_texts = vendor.get("texts")
             log.extend(res.get("log") or [])
+            # Always log technical failure details to AI log — never buyer UI
+            if not res.get("ok") and res.get("technical_error"):
+                log.append(
+                    {
+                        "at": now_iso(),
+                        "purpose": "extract_vendor_failure",
+                        "vendor": vendor.get("name"),
+                        "vendor_id": vendor.get("vendor_id"),
+                        "technical_error": res.get("technical_error"),
+                    }
+                )
             if res.get("ok"):
-                vendor["extraction"] = res["extraction"]
-                vendor["texts"] = res.get("texts") or {}
-                vendor["status"] = "extracted"
-                vendor["extracted_at"] = now_iso()
-                vendor["error"] = None
-                snapshots.bump_vendor_data_version(
-                    state,
-                    "vendor_extracted",
-                    affected_vendor_ids=[res["vendor_id"]],
-                    affected_file_ids=[f["file_id"] for f in vendor.get("files", [])],
+                _apply_extract_success(
+                    state, vendor, res, was_extracted=was_extracted, prior_extraction=prior_extraction
                 )
             else:
-                if was_extracted and prior_extraction is not None:
-                    vendor["extraction"] = prior_extraction
-                    vendor["texts"] = prior_texts or {}
-                    vendor["status"] = "extracted"
-                    vendor["error"] = f"Re-read failed; keeping previous. {res.get('error')}"
-                else:
-                    vendor["status"] = "error"
-                    vendor["error"] = res.get("error") or "extract failed"
-        if all(v.get("status") == "extracted" for v in state["vendors"] if v.get("files")):
+                _apply_extract_failure(
+                    vendor,
+                    res.get("technical_error") or res.get("error") or "extract failed",
+                    was_extracted=was_extracted,
+                    prior_extraction=prior_extraction,
+                    prior_texts=prior_texts,
+                )
+        if all(
+            vendor_extraction.get_status(v) in (
+                vendor_extraction.STATUS_EXTRACTED,
+                vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+                vendor_extraction.STATUS_EXCLUDED,
+            )
+            for v in state["vendors"]
+            if v.get("files")
+        ):
             state["status"] = "compared"
         storage.save_state(rfx_id, state)
 
@@ -209,54 +272,46 @@ def extract(request: Request, rfx_id: str, vendor_id: str):
     state = load_or_404(rfx_id)
     vendor = _vendor(state, vendor_id)
     if not vendor["files"]:
-        vendor["error"] = "No files to read."
+        vendor_extraction.set_failed(vendor, technical="No files to read.", had_previous=False)
+        vendor["error"] = vendor_extraction.buyer_message(vendor)
         return render(request, "partials/vendor_card.html", state=state, v=vendor)
-    was_extracted = vendor.get("status") == "extracted" and bool(vendor.get("extraction"))
+    was_extracted = bool(vendor.get("extraction"))
     prior_extraction = vendor.get("extraction")
     prior_texts = vendor.get("texts")
     base_version = snapshots.current_version(state)
     try:
-        vendor["status"] = "extracting"
-        vendor["error"] = None
-        vendor["texts"] = {}  # re-read from the files every time; never reuse a stale transcription
-        # Persist extracting status so other pages can show Processing
+        vendor_extraction.set_extracting(vendor)
+        vendor["texts"] = {}
         storage.save_state(rfx_id, state)
-        # Reload to pick up concurrent bumps (optimistic check later)
         state = load_or_404(rfx_id)
         vendor = _vendor(state, vendor_id)
-        vendor["status"] = "extracting"
-        vendor["error"] = None
+        vendor_extraction.set_extracting(vendor)
         vendor["texts"] = {}
         call_log: list = []
         new_ext = extractor.extract_vendor(state, vendor, storage.get_bytes, log=call_log)
         texts_snap = dict(vendor.get("texts") or {})
         with _extract_save_lock:
-            # Reload so parallel sibling extracts are not overwritten.
             state = load_or_404(rfx_id)
             vendor = _vendor(state, vendor_id)
             state.setdefault("ai_log", []).extend(call_log)
-            vendor["extraction"] = new_ext
-            vendor["texts"] = texts_snap
-            vendor["status"] = "extracted"
-            vendor["extracted_at"] = now_iso()
-            vendor["error"] = None
-            vendor["prior_extractions"] = vendor.get("prior_extractions") or []
-            if was_extracted and prior_extraction is not None:
-                vendor["prior_extractions"].append(
-                    {"at": now_iso(), "extraction": prior_extraction, "vendor_data_version": base_version}
-                )
-                if len(vendor["prior_extractions"]) > 5:
-                    vendor["prior_extractions"] = vendor["prior_extractions"][-5:]
-                reason = "vendor_reprocessed"
-            else:
-                reason = "vendor_extracted"
-            snapshots.bump_vendor_data_version(
+            _apply_extract_success(
                 state,
-                reason,
-                affected_vendor_ids=[vendor_id],
-                affected_file_ids=[f["file_id"] for f in vendor.get("files", [])],
+                vendor,
+                {"extraction": new_ext, "texts": texts_snap},
+                was_extracted=was_extracted,
+                prior_extraction=prior_extraction,
+                base_version=base_version,
             )
-            if all(v.get("status") == "extracted" for v in state["vendors"] if v.get("files")):
+            vendor["texts"] = texts_snap
+            if all(
+                vendor_extraction.get_status(v) in (
+                    vendor_extraction.STATUS_EXTRACTED,
+                    vendor_extraction.STATUS_FAILED_USING_PREVIOUS,
+                    vendor_extraction.STATUS_EXCLUDED,
+                )
+                for v in state["vendors"]
+                if v.get("files")
+            ):
                 state["status"] = "compared"
             storage.save_state(rfx_id, state)
         return render(request, "partials/vendor_card.html", state=state, v=vendor)
@@ -264,28 +319,89 @@ def extract(request: Request, rfx_id: str, vendor_id: str):
         with _extract_save_lock:
             state = load_or_404(rfx_id)
             vendor = _vendor(state, vendor_id)
-            vendor["status"] = "received" if not was_extracted else "extracted"
-            if was_extracted:
-                vendor["extraction"] = prior_extraction
-                vendor["texts"] = prior_texts or vendor.get("texts") or {}
-            vendor["error"] = str(e)
+            state.setdefault("ai_log", []).append(
+                {
+                    "at": now_iso(),
+                    "purpose": "extract_vendor_failure",
+                    "vendor": vendor.get("name"),
+                    "technical_error": str(e),
+                }
+            )
+            _apply_extract_failure(
+                vendor,
+                str(e),
+                was_extracted=was_extracted,
+                prior_extraction=prior_extraction,
+                prior_texts=prior_texts,
+            )
             storage.save_state(rfx_id, state)
     except Exception as e:
+        tech = getattr(e, "technical", None) or f"{type(e).__name__}: {e}"
         with _extract_save_lock:
             state = load_or_404(rfx_id)
             vendor = _vendor(state, vendor_id)
-            # Preserve prior successful extraction as historical/current unless user re-reads successfully
-            if was_extracted and prior_extraction is not None:
-                vendor["extraction"] = prior_extraction
-                vendor["texts"] = prior_texts or {}
-                vendor["status"] = "extracted"
-                vendor["last_failed_attempt"] = {"at": now_iso(), "error": f"{type(e).__name__}: {e}"}
-                vendor["error"] = f"Re-read failed; keeping previous successful extraction. {type(e).__name__}: {e}"
-            else:
-                vendor["status"] = "error"
-                vendor["error"] = f"{type(e).__name__}: {e}"
+            state.setdefault("ai_log", []).append(
+                {
+                    "at": now_iso(),
+                    "purpose": "extract_vendor_failure",
+                    "vendor": vendor.get("name"),
+                    "technical_error": tech[:4000],
+                }
+            )
+            _apply_extract_failure(
+                vendor,
+                tech,
+                was_extracted=was_extracted,
+                prior_extraction=prior_extraction,
+                prior_texts=prior_texts,
+            )
             storage.save_state(rfx_id, state)
     return render(request, "partials/vendor_card.html", state=state, v=vendor)
+
+
+@router.post("/rfx/{rfx_id}/vendor/{vendor_id}/exclude", response_class=HTMLResponse)
+async def exclude_vendor(
+    request: Request,
+    rfx_id: str,
+    vendor_id: str,
+    reason: str = Form(""),
+):
+    """Buyer excludes a vendor from the award (required reason + audit)."""
+    from core import scenario
+
+    state = load_or_404(rfx_id)
+    vendor = _vendor(state, vendor_id)
+    reason = (reason or "").strip()
+    if not reason:
+        return error_fragment("Exclusion requires a written reason.", 400)
+    try:
+        vendor_extraction.set_excluded(vendor, reason=reason, actor="buyer")
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    scenario.append_buyer_review_log(
+        state,
+        {
+            "source": "email",
+            "vendor_id": vendor_id,
+            "vendor_name": vendor.get("name"),
+            "line_no": None,
+            "action": "exclude_vendor",
+            "note": reason,
+        },
+    )
+    state.setdefault("freeze_audit", []).append(
+        {
+            "at": now_iso(),
+            "action": "exclude_vendor",
+            "vendor_id": vendor_id,
+            "vendor": vendor.get("name"),
+            "detail": reason,
+        }
+    )
+    storage.save_state(rfx_id, state)
+    if request.headers.get("HX-Request"):
+        return render(request, "partials/vendor_card.html", state=state, v=vendor)
+    return RedirectResponse(f"/rfx/{rfx_id}/email", status_code=303)
 
 
 @router.get("/rfx/{rfx_id}/vendor/{vendor_id}/card", response_class=HTMLResponse)

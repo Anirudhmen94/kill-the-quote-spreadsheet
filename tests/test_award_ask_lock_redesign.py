@@ -61,7 +61,7 @@ def test_premade_who_to_drop_and_risks():
         assert "Recommendation" in r.text
 
 
-def test_lock_one_click_auto_partial_with_existing_rec():
+def test_lock_one_click_refuses_incomplete_no_auto_partial():
     st = _seed()
     rid = st["id"]
     assert scenario.recommendation_lifecycle(storage.load_state(rid)).get("can_freeze") is True
@@ -73,20 +73,20 @@ def test_lock_one_click_auto_partial_with_existing_rec():
 
     st2 = storage.load_state(rid)
     pack = st2.get("freeze") or {}
-    assert pack.get("status") == "frozen"
-    assert pack.get("freeze_mode") == "partial"
+    assert not (pack.get("status") == "frozen")
     flash = st2.get("flash") or {}
-    assert flash.get("level") == "success"
-    assert "locked successfully" in (flash.get("message") or "").lower()
-    assert "partial" in (flash.get("message") or "").lower()
+    assert flash.get("level") == "error"
+    msg = (flash.get("message") or "").lower()
+    assert "uncovered" in msg or "complete" in msg or "partial" in msg
+    assert "manual" in msg or "freeze partial" in msg or "acknowledg" in msg
 
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
     assert 'data-testid="award-flash"' in page.text
-    assert "Success" in page.text
+    assert "Error." in page.text
 
 
-def test_lock_one_click_saves_rec_then_auto_partial():
+def test_lock_saves_rec_but_still_refuses_incomplete():
     st = _seed()
     _clear_recs(st)
     rid = st["id"]
@@ -99,16 +99,11 @@ def test_lock_one_click_saves_rec_then_auto_partial():
     )
     assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)
-    assert st2.get("recommendation")
-    assert st2["recommendation"].get("rationale") or "Buyer rationale" in (
-        st2["recommendation"].get("recommendation_markdown") or ""
-    )
+    # May have saved recommendation before complete freeze failed
     pack = st2.get("freeze") or {}
-    assert pack.get("status") == "frozen"
-    assert pack.get("freeze_mode") == "partial"
+    assert not (pack.get("status") == "frozen")
     flash = st2.get("flash") or {}
-    assert flash.get("level") == "success"
-    assert "Recommendation saved" in (flash.get("message") or "")
+    assert flash.get("level") == "error"
 
 
 def test_lock_requires_rationale_when_no_rec():
@@ -123,7 +118,15 @@ def test_lock_requires_rationale_when_no_rec():
 def test_send_success_flash_still_works_after_lock():
     st = _seed()
     rid = st["id"]
-    client.post(f"/rfx/{rid}/award/lock", data={}, follow_redirects=False)
+    client.post(
+        f"/rfx/{rid}/award/freeze",
+        data={
+            "freeze_mode": "partial",
+            "partial_reason": "Line 30 uncovered; demo partial for send notices.",
+            "acknowledgement": ["coverage_gaps", "selected_blockers"],
+        },
+        follow_redirects=False,
+    )
     r = client.post(f"/rfx/{rid}/award/send-notices", follow_redirects=False)
     assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)
