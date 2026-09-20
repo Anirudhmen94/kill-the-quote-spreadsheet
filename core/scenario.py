@@ -990,3 +990,57 @@ def get_current_award_readiness(state: dict, *, require_quality_gate: bool = Tru
         "errors": check.get("errors") or [],
         "scenario": scen,
     }
+
+
+def freeze_blocked_human(life: dict | None) -> str | None:
+    """Buyer-facing next step for a freeze block (UI copy; engine strings unchanged)."""
+    if not life:
+        return None
+    if life.get("can_freeze"):
+        return None
+    reason = (life.get("freeze_blocked_reason") or "").strip()
+    lifecycle = life.get("lifecycle")
+    if lifecycle in (REC_FROZEN_COMPLETE, REC_FROZEN_PARTIAL) or reason == "Award already frozen.":
+        return "This award is already frozen."
+    if lifecycle == REC_STALE or "current recommendation before freezing" in reason.lower():
+        return "Next: vendor data changed — write a short rationale and save this calculation again."
+    if lifecycle == REC_CALCULATED or "rationale required" in reason.lower():
+        return "Next: write a short rationale and save this calculation as your recommendation."
+    return reason or "Next: save a current recommendation before freeze."
+
+
+def freeze_ux_checklist(
+    state: dict,
+    *,
+    live: dict | None = None,
+    life: dict | None = None,
+    has_blocking_exceptions: bool = False,
+) -> dict:
+    """Visible Step-3 checklist for Award freeze readiness (UX only)."""
+    from . import freeze as freeze_mod
+
+    life = life or recommendation_lifecycle(state)
+    pack = freeze_mod.current_freeze(state)
+    frozen = bool(pack and pack.get("status") == "frozen")
+    calc_ok = bool(live and live.get("available"))
+    rec_ok = bool(life.get("can_freeze"))
+    anomalies_ok = not bool(has_blocking_exceptions)
+    needs_save = (not frozen) and (not rec_ok) and life.get("lifecycle") in (
+        REC_CALCULATED,
+        REC_STALE,
+        "calculated",
+        "stale",
+    )
+    human = freeze_blocked_human(life)
+    return {
+        "show": not frozen,
+        "frozen": frozen,
+        "anomalies_ok": anomalies_ok,
+        "recommendation_ok": rec_ok,
+        "calculation_ok": calc_ok,
+        "needs_save": needs_save,
+        "all_ready_for_freeze": bool(rec_ok and calc_ok),
+        "human_blocked_reason": human,
+        "engine_blocked_reason": life.get("freeze_blocked_reason"),
+        "lifecycle": life.get("lifecycle"),
+    }

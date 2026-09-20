@@ -848,3 +848,117 @@ def assert_context_current(state: dict, snapshot: dict, context_version: int) ->
         )
     if snapshot.get("id") is None:
         raise RuntimeError("Missing calculation snapshot id")
+
+
+def build_live_recommendation_summary(live: dict, vendor_packs: list | None = None) -> str:
+    """Short deterministic summary of the live quality-gated split for Award save form."""
+    if not live or not live.get("available"):
+        return ""
+    snap = live.get("snapshot") or {}
+    snap_id = snap.get("id") or "—"
+    vdv = live.get("vendor_data_version")
+    total = live.get("total_extended_inr")
+    covered = live.get("covered_line_count")
+    uncovered = live.get("uncovered_lines") or []
+    cmp = live.get("cmp") or {}
+    line_count = cmp.get("line_count")
+    if line_count is None and covered is not None:
+        line_count = covered + len(uncovered)
+    packs = vendor_packs
+    if packs is None:
+        try:
+            from . import award_packs
+
+            packs = award_packs.vendor_award_packs(
+                live.get("split"),
+                cmp=cmp,
+                gates=live.get("gates"),
+                total_extended_inr=total,
+            )
+        except Exception:
+            packs = []
+    share_bits = []
+    for p in packs or []:
+        name = p.get("vendor") or "?"
+        n = p.get("lines_won")
+        share_bits.append(f"{name} ({n} line{'s' if n != 1 else ''})")
+    exclusion = (cmp.get("exclusion_summary") or {}).get("headline") or ""
+    lines = [
+        f"**Quality-gated cheapest-per-line** (snapshot `{snap_id}`, vendor data v{vdv}).",
+        "",
+        f"- Official total: **{engine.fmt_inr(total)}** / yr",
+        f"- Lines covered: {covered} / {line_count or '?'}",
+        f"- Uncovered: {uncovered or 'none'}",
+    ]
+    if share_bits:
+        lines.append(f"- Award split: {', '.join(share_bits)}")
+    if exclusion:
+        lines.append("")
+        lines.append(f"**Excluded on purpose:** {exclusion}")
+    return "\n".join(lines)
+
+
+def save_recommendation_from_live(
+    state: dict,
+    rationale: str,
+    *,
+    summary: str | None = None,
+    vendor_packs: list | None = None,
+) -> dict:
+    """Persist a current award recommendation from the live calculation + buyer rationale.
+
+    Same contract as ``save_recommendation_from_answer``: ties the rec to the
+    current calculation snapshot and vendor_data_version so freeze can unlock.
+    """
+    rationale = (rationale or "").strip()
+    if not rationale:
+        raise ValueError("Rationale is required to save a recommendation.")
+
+    ensure_snapshot_fields(state)
+    refresh_staleness(state)
+    counts = processing_counts(state)
+    if counts["extracting"]:
+        raise ValueError(
+            "A vendor response is still being extracted. Wait for processing to finish, then save again."
+        )
+    if not any(v.get("extraction") for v in state.get("vendors", [])):
+        raise ValueError("Extract vendor responses before saving a recommendation.")
+
+    live = live_award_calculation(state)
+    if not live.get("available"):
+        raise ValueError("No calculation available to save as a recommendation.")
+
+    summary_text = (summary if summary is not None else "").strip()
+    if not summary_text:
+        summary_text = build_live_recommendation_summary(live, vendor_packs=vendor_packs)
+
+    body_parts = []
+    if summary_text:
+        body_parts.append(summary_text)
+    body_parts.append("## Buyer rationale\n\n" + rationale)
+    answer_md = "\n\n".join(body_parts)
+
+    snap = live["snapshot"]
+    raw = {
+        "question": "Save current calculation as award recommendation",
+        "answer": answer_md,
+        "trace": [
+            {
+                "tool": "award_page_save_recommendation",
+                "input": {"source": "award"},
+                "ok": True,
+                "output_preview": "buyer rationale + live calc",
+            }
+        ],
+        "tables": [],
+        "caveats": list((live.get("split") or {}).get("caveats") or []),
+        "rationale": rationale,
+        "source": "award_page",
+    }
+    answer = attach_answer_metadata(state, raw, snap)
+    state.setdefault("chat", []).append(answer)
+    idx = len(state["chat"]) - 1
+    rec = save_recommendation_from_answer(state, answer, idx)
+    rec["rationale"] = rationale
+    rec["source"] = "award_page"
+    return rec

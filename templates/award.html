@@ -72,11 +72,36 @@
       </div>
       {% endif %}
 
-      <div class="px-4 py-3">
+      <div class="px-4 py-3" id="save-recommendation">
         {% if rec and rec.status == 'current' %}
         <div class="text-xs text-slate-500 mb-2">Saved analyst narrative · “{{ rec.question }}” · {{ (rec.saved_at or rec.created_at or '')[:16].replace('T',' ') }} UTC</div>
         <div class="prose-sm text-sm text-slate-800 max-h-48 overflow-y-auto">{{ (rec.recommendation_markdown or rec.answer) | md | safe }}</div>
         {% if rec.caveats %}<ul class="mt-2 list-disc pl-5 text-xs text-amber-900 space-y-0.5">{% for c in rec.caveats %}<li>{{ c }}</li>{% endfor %}</ul>{% endif %}
+        {% elif freeze_checklist and freeze_checklist.needs_save %}
+        <div class="space-y-3">
+          <div>
+            <div class="font-medium text-slate-900 text-sm">Save this calculation as your recommendation</div>
+            <p class="text-xs text-slate-600 mt-0.5">Freeze needs a current recommendation tied to this vendor-data version. Write a short rationale, then save — you can freeze without leaving Award.</p>
+          </div>
+          <form method="post" action="/rfx/{{ state.id }}/award/save-recommendation" class="space-y-2" id="award-save-recommendation-form">
+            {% if draft_recommendation_summary %}
+            <input type="hidden" name="summary" value="{{ draft_recommendation_summary }}">
+            <details class="text-xs text-slate-600 rounded border border-slate-200 bg-slate-50 px-3 py-2">
+              <summary class="cursor-pointer font-medium text-slate-700 hover:text-slate-900">Preview calculation summary (included on save)</summary>
+              <pre class="mt-2 whitespace-pre-wrap font-sans text-[11px] text-slate-700">{{ draft_recommendation_summary }}</pre>
+            </details>
+            {% endif %}
+            <label class="block text-xs font-medium text-slate-800">Rationale <span class="text-rose-700">(required)</span>
+              <textarea name="rationale" id="award-rationale" required rows="3"
+                class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-400"
+                placeholder="Why this split? Note any caveats the VP should know."></textarea>
+            </label>
+            <div class="flex flex-wrap items-center gap-3">
+              <button type="submit" class="rounded-lg bg-emerald-700 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-800">Save recommendation</button>
+              <a href="/rfx/{{ state.id }}/compare#analyst" class="text-xs text-slate-600 underline hover:text-slate-900">Ask the analyst instead</a>
+            </div>
+          </form>
+        </div>
         {% else %}
         <div class="text-sm text-slate-600">
           No recommendation saved yet.
@@ -207,6 +232,57 @@
         {% if market_quote_coverage %}
         <div class="text-[11px] text-slate-600">Market quote coverage: <strong>{{ market_quote_coverage.label }}</strong></div>
         {% endif %}
+
+        {% if freeze_checklist and freeze_checklist.show %}
+        <div class="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-3 space-y-2" id="ready-to-freeze" data-testid="ready-to-freeze">
+          <div class="text-xs font-semibold uppercase tracking-wide text-slate-600">Ready to freeze?</div>
+          <ul class="space-y-2 text-sm">
+            <li class="flex flex-wrap items-start gap-2">
+              <span class="shrink-0 w-5 text-center tabular-nums" aria-hidden="true">{% if freeze_checklist.anomalies_ok %}✓{% else %}○{% endif %}</span>
+              <div class="flex-1 min-w-0">
+                {% if freeze_checklist.anomalies_ok %}
+                <span class="text-slate-800">Open anomalies resolved</span>
+                {% else %}
+                <span class="text-slate-800">Open anomalies still block a clean freeze</span>
+                <div class="mt-0.5"><a href="/rfx/{{ state.id }}/compare#anomalies" class="text-xs font-medium text-amber-900 underline hover:text-amber-950">Resolve on Compare → Anomalies</a></div>
+                {% endif %}
+              </div>
+            </li>
+            <li class="flex flex-wrap items-start gap-2">
+              <span class="shrink-0 w-5 text-center tabular-nums" aria-hidden="true">{% if freeze_checklist.recommendation_ok %}✓{% else %}○{% endif %}</span>
+              <div class="flex-1 min-w-0">
+                {% if freeze_checklist.recommendation_ok %}
+                <span class="text-slate-800">Current recommendation saved with rationale (matches vendor data version)</span>
+                {% else %}
+                <span class="text-slate-800">Current recommendation not saved yet</span>
+                {% if freeze_next_step %}
+                <div class="mt-0.5 text-xs text-slate-600">{{ freeze_next_step }}</div>
+                {% endif %}
+                <div class="mt-1">
+                  <a href="#save-recommendation" class="inline-flex items-center rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
+                    onclick="var el=document.getElementById('award-rationale'); if(el){ el.focus(); }">Save recommendation to unlock freeze</a>
+                </div>
+                {% endif %}
+              </div>
+            </li>
+            <li class="flex flex-wrap items-start gap-2">
+              <span class="shrink-0 w-5 text-center tabular-nums" aria-hidden="true">{% if freeze_checklist.calculation_ok %}✓{% else %}○{% endif %}</span>
+              <div class="flex-1 min-w-0">
+                {% if freeze_checklist.calculation_ok %}
+                <span class="text-slate-800">Calculation available</span>
+                {% else %}
+                <span class="text-slate-800">Calculation not available yet</span>
+                <div class="mt-0.5"><a href="/rfx/{{ state.id }}/compare" class="text-xs font-medium underline text-slate-700 hover:text-slate-900">Extract vendor responses on Compare</a></div>
+                {% endif %}
+              </div>
+            </li>
+          </ul>
+          {% if freeze_checklist.recommendation_ok and freeze_checklist.calculation_ok %}
+          <p class="text-xs text-emerald-800">Checklist clear for freeze — you can lock this award below.</p>
+          {% endif %}
+        </div>
+        {% endif %}
+
         {% if freeze_check_complete and not freeze_check_complete.ok %}
         <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
           Complete freeze blocked:
@@ -216,9 +292,16 @@
 
         <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2">
           <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
+          {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}
+          <button type="submit" class="rounded-lg bg-slate-300 text-slate-500 px-4 py-2 text-sm font-medium cursor-not-allowed" disabled
+            aria-disabled="true">Freeze this award</button>
+          <p class="text-xs text-slate-600" data-testid="freeze-blocked-plain">
+            {{ freeze_next_step or "Next: write a short rationale and save this calculation as your recommendation." }}
+          </p>
+          {% else %}
           <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800"
-            {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled title="{{ recommendation_lifecycle.freeze_blocked_reason }}"{% endif %}
             onclick="document.getElementById('freeze-mode').value='complete'">Freeze this award</button>
+          {% endif %}
 
           <details class="text-xs text-slate-600">
             <summary class="cursor-pointer hover:text-slate-900">Advanced… partial freeze, assumed cells, acknowledgements</summary>

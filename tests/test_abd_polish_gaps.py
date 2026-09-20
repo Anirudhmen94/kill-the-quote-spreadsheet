@@ -121,7 +121,7 @@ def test_discount_confirm_route_persists_actor_and_snapshot(monkeypatch, tmp_pat
 
 
 def test_award_unsaved_banner_appears_once():
-    """Template smoke: with live calc and no saved rec, the Ask CTA appears once (slim Award)."""
+    """Template smoke: with live calc and no saved rec, inline save form + Ask secondary."""
     from core import award_packs
 
     st = _seed()
@@ -133,6 +133,10 @@ def test_award_unsaved_banner_appears_once():
     packs = award_packs.vendor_award_packs(live["split"], cmp=live["cmp"], gates=live["gates"])
     uncovered = award_packs.uncovered_line_rows(live["split"])
     unconfirmed = award_packs.unconfirmed_discounts(live.get("conditional_discounts"))
+    checklist = scenario.freeze_ux_checklist(
+        st, live=live, life=life, has_blocking_exceptions=False
+    )
+    draft = snapshots.build_live_recommendation_summary(live, vendor_packs=packs)
     html = templates.get_template("award.html").render(
         {
             "request": mock.Mock(),
@@ -157,6 +161,9 @@ def test_award_unsaved_banner_appears_once():
             "uncovered_lines": uncovered,
             "notice_preview": {"frozen": False, "notices": [], "regrets": []},
             "unconfirmed_discounts": unconfirmed,
+            "freeze_checklist": checklist,
+            "freeze_next_step": checklist.get("human_blocked_reason"),
+            "draft_recommendation_summary": draft,
             "blended_rate_banner": None,
             "ai_ok": False,
             "model": "",
@@ -170,9 +177,12 @@ def test_award_unsaved_banner_appears_once():
             "demo_prompts": [],
         }
     )
-    phrase = "No recommendation saved yet"
-    assert html.count(phrase) == 1, f"expected once, got {html.count(phrase)}"
-    assert "Ask on Compare and save" in html
+    assert "Save this calculation as your recommendation" in html
+    assert "Ask the analyst instead" in html
+    assert html.count("No recommendation saved yet") == 0
+    assert "Ready to freeze?" in html
+    assert "Save recommendation to unlock freeze" in html
+    assert 'data-testid="freeze-blocked-plain"' in html
     # Confirm control present for unconfirmed discounts
     assert "Confirm into official total" in html
     assert "Conditional discounts not yet confirmed" in html

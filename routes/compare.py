@@ -217,6 +217,16 @@ def award_page(request: Request, rfx_id: str):
         state, freeze_pack=pack, live=live if live.get("available") else None, vendor_packs=vendor_packs
     )
     unconfirmed = award_packs.unconfirmed_discounts(conditional)
+    blocking = exc_mod.has_blocking_exceptions(state)
+    freeze_checklist = scenario.freeze_ux_checklist(
+        state,
+        live=live if live.get("available") else None,
+        life=life,
+        has_blocking_exceptions=blocking,
+    )
+    draft_summary = ""
+    if live.get("available") and freeze_checklist.get("needs_save"):
+        draft_summary = snapshots.build_live_recommendation_summary(live, vendor_packs=vendor_packs)
 
     return render(
         request,
@@ -230,7 +240,7 @@ def award_page(request: Request, rfx_id: str):
         gates=gates,
         freeze_pack=pack,
         active="award",
-        has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
+        has_blocking_exceptions=blocking,
         flash=flash,
         recommendation_lifecycle=life,
         market_quote_coverage=cmp.get("market_quote_coverage"),
@@ -241,6 +251,9 @@ def award_page(request: Request, rfx_id: str):
         uncovered_lines=uncovered,
         notice_preview=notice_preview,
         unconfirmed_discounts=unconfirmed,
+        freeze_checklist=freeze_checklist,
+        freeze_next_step=freeze_checklist.get("human_blocked_reason"),
+        draft_recommendation_summary=draft_summary,
     )
 
 
@@ -308,6 +321,27 @@ def export_memo(rfx_id: str, provisional: bool = False):
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="award-memo-{rfx_id}.md"'},
     )
+
+
+@router.post("/rfx/{rfx_id}/award/save-recommendation", response_class=HTMLResponse)
+async def save_award_recommendation_route(
+    request: Request,
+    rfx_id: str,
+    rationale: str = Form(""),
+    summary: str = Form(""),
+):
+    """Save live calculation as current recommendation (Award UX path; same persistence as Ask)."""
+    state = load_or_404(rfx_id)
+    try:
+        snapshots.save_recommendation_from_live(
+            state,
+            rationale,
+            summary=summary or None,
+        )
+    except ValueError as e:
+        return error_fragment(str(e), 400)
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/award#award-step-3", status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/award/freeze", response_class=HTMLResponse)
