@@ -119,6 +119,8 @@
         {% endif %}
       </div>
 
+      {% include "partials/charts_compact.html" %}
+
       {% if has_blocking_exceptions %}
       <div class="px-4 py-2 border-b border-amber-200 bg-amber-50 text-amber-950 text-sm">
         Open anomalies still block a clean freeze.
@@ -305,6 +307,7 @@
             <button type="submit" class="underline hover:text-slate-900">Award workbook (.xlsx)</button>
           </form>
           <a href="/rfx/{{ state.id }}/memo.md" class="underline hover:text-slate-900">Memo (.md)</a>
+          <a href="/rfx/{{ state.id }}/audit.csv" class="underline hover:text-slate-900">Audit trail (.csv)</a>
         </div>
         {% else %}
         <button type="button" disabled
@@ -314,6 +317,7 @@
         {% endif %}
       </div>
     </div>
+    {% include "partials/audit_trust_strip.html" %}
   </section>
 </div>
 {% endblock %}

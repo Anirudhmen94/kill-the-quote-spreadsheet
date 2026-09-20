@@ -92,6 +92,9 @@ def award_workbook(state: dict, provisional: bool = False) -> bytes:
     ws.title = "Summary"
     ws["A1"] = f"Award recommendation: {cmp['title']}"
     ws["A1"].font = Font(bold=True, size=14)
+    from . import freeze as freeze_mod
+
+    pack = freeze_mod.current_freeze(state)
     status_line = (
         f"RFx {cmp['rfx_id']} · exported {meta['export_timestamp']} · "
         f"vendor data version {meta['vendor_data_version']} · snapshot {meta['calculation_snapshot_id']} · "
@@ -99,6 +102,12 @@ def award_workbook(state: dict, provisional: bool = False) -> bytes:
         f"vendors processed {meta['vendors_processed']} · still processing {meta['vendors_still_processing']} · "
         f"review {meta['needs_review']} · unresolved {meta['unresolved']}"
     )
+    if pack:
+        status_line += (
+            f" · freeze {pack.get('id')} ({pack.get('status')}"
+            f"{' · ' + pack['freeze_mode'] if pack.get('freeze_mode') else ''}"
+            f") · strategy {pack.get('strategy') or pack.get('strategy_key') or '—'}"
+        )
     ws["A2"] = status_line
     if meta.get("provisional"):
         ws["A3"] = "PROVISIONAL EXPORT — vendor responses were still processing at export time."
@@ -168,23 +177,31 @@ def award_workbook(state: dict, provisional: bool = False) -> bytes:
 
     _sheet_from_rows(wb, "Review log", ["When", "Vendor", "Line", "Action", "Value INR", "Note"], [[r.get("at"), r.get("vendor_name"), r["line_no"], r["action"], r.get("value_inr"), r.get("note")] for r in state.get("reviews", [])], {"Note": 60})
 
-    _sheet_from_rows(
-        wb,
-        "Snapshot",
-        ["Field", "Value"],
-        [
-            ["RFx ID", meta["rfx_id"]],
-            ["Export timestamp", meta["export_timestamp"]],
-            ["Vendor data version", meta["vendor_data_version"]],
-            ["Calculation snapshot ID", meta["calculation_snapshot_id"]],
-            ["Export status", meta["export_status"]],
-            ["Vendors processed", meta["vendors_processed"]],
-            ["Still processing", meta["vendors_still_processing"]],
-            ["Needs review", meta["needs_review"]],
-            ["Unresolved", meta["unresolved"]],
-            ["Input hash", snap.get("input_hash")],
-        ],
-    )
+    meta_rows = [
+        ["RFx ID", meta["rfx_id"]],
+        ["Export timestamp", meta["export_timestamp"]],
+        ["Vendor data version", meta["vendor_data_version"]],
+        ["Calculation snapshot ID", meta["calculation_snapshot_id"]],
+        ["Export status", meta["export_status"]],
+        ["Vendors processed", meta["vendors_processed"]],
+        ["Still processing", meta["vendors_still_processing"]],
+        ["Needs review", meta["needs_review"]],
+        ["Unresolved", meta["unresolved"]],
+        ["Input hash", snap.get("input_hash")],
+    ]
+    if pack:
+        meta_rows.extend(
+            [
+                ["Freeze ID", pack.get("id")],
+                ["Freeze status", pack.get("status")],
+                ["Freeze mode", pack.get("freeze_mode")],
+                ["Freeze strategy", pack.get("strategy") or pack.get("strategy_key")],
+                ["Freeze snapshot ID", pack.get("calculation_snapshot_id")],
+                ["Freeze vendor data version", pack.get("vendor_data_version")],
+                ["Freeze total INR", pack.get("total_extended_inr")],
+            ]
+        )
+    _sheet_from_rows(wb, "Snapshot metadata", ["Field", "Value"], meta_rows)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -218,12 +235,21 @@ def award_memo_md(state: dict, provisional: bool = False) -> str:
     out = [f"# Award recommendation: {cmp['title']}", ""]
     if meta.get("provisional"):
         out += ["> **PROVISIONAL EXPORT — vendor responses were still processing at export time.**", ""]
+    from . import freeze as freeze_mod
+
+    pack = freeze_mod.current_freeze(state)
     out += [
         f"RFx `{cmp['rfx_id']}` · {meta['export_timestamp']}",
         f"Vendor data version **{meta['vendor_data_version']}** · Calculation snapshot `{meta['calculation_snapshot_id']}` · Export status: **{meta['export_status']}**",
         f"Vendors processed: {meta['vendors_processed']} · Still processing: {meta['vendors_still_processing']} · Review: {meta['needs_review']} · Unresolved: {meta['unresolved']}",
-        "",
     ]
+    if pack:
+        out.append(
+            f"Freeze `{pack.get('id')}` · status **{pack.get('status')}**"
+            + (f" · mode {pack.get('freeze_mode')}" if pack.get('freeze_mode') else "")
+            + f" · strategy {pack.get('strategy') or pack.get('strategy_key') or '—'}"
+        )
+    out.append("")
     status = rec.get("status")
     if status == "current":
         out += ["## Current award recommendation", ""]
@@ -254,3 +280,58 @@ def award_memo_md(state: dict, provisional: bool = False) -> str:
         for r in state["reviews"]:
             out.append(f"- {r.get('at','')[:16]} {r.get('vendor_name')} L{r['line_no']}: {r['action']}{' → ₹' + str(r['value_inr']) if r.get('value_inr') is not None else ''} — {r.get('note','')}")
     return "\n".join(out)
+
+
+
+def audit_trail_csv(state: dict) -> bytes:
+    """Small audit CSV: buyer reviews + freeze/notices summary (engine/state only)."""
+    import csv
+
+    snapshots.ensure_snapshot_fields(state)
+    from . import freeze as freeze_mod
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["section", "at", "vendor", "line", "action", "value_inr", "note", "extra"])
+    for r in state.get("buyer_review_log") or state.get("reviews") or []:
+        w.writerow(
+            [
+                "review",
+                r.get("at"),
+                r.get("vendor_name") or r.get("vendor"),
+                r.get("line_no"),
+                r.get("action"),
+                r.get("value_inr"),
+                r.get("note"),
+                r.get("source") or "",
+            ]
+        )
+    pack = freeze_mod.current_freeze(state)
+    if pack:
+        w.writerow(
+            [
+                "freeze",
+                pack.get("frozen_at"),
+                "",
+                "",
+                pack.get("status"),
+                pack.get("total_extended_inr"),
+                pack.get("strategy") or pack.get("strategy_key"),
+                pack.get("id"),
+            ]
+        )
+    for m in state.get("outbox") or []:
+        if (m.get("kind") or "") in ("award_notice", "regret", "regret_notice", "stakeholder_alert"):
+            w.writerow(
+                [
+                    "outbox",
+                    m.get("sent_at"),
+                    m.get("vendor_name"),
+                    "",
+                    m.get("kind"),
+                    "",
+                    m.get("subject"),
+                    m.get("freeze_id") or "",
+                ]
+            )
+    return buf.getvalue().encode("utf-8")

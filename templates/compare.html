@@ -217,7 +217,13 @@
 </div>
 <p class="mt-3 text-xs text-slate-500">Green ring marks the cheapest usable quote on each line. Amber and red cells are excluded from every total until you resolve them. Footer totals are each vendor's own coverage and are not comparable across vendors; use the analyst for like-for-like totals.</p>
 
+{% with charts_heading='Quality-gated allocation' %}
+{% include "partials/charts_panel.html" %}
+{% endwith %}
+
 {% include "partials/anomalies_panel.html" %}
+
+{% include "partials/audit_trust_strip.html" %}
 {% endif %}
 
 {# Right-side Ask analyst slide-over — matrix stays primary #}

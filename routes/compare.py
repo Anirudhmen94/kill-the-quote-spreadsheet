@@ -62,12 +62,16 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
             },
         )
         storage.save_state(rfx_id, state)
-    from core import compare_ask
+    from core import charts, compare_ask
 
     ready = any(v.get("extraction") for v in state["vendors"])
     filter_status = status if status in ("open", "pending", "resolved", "all") else "open"
     anomaly_items = exc_mod.list_exceptions(state, None if filter_status == "all" else filter_status)
     exc_counts = exc_mod.counts(state)
+    chart_bundle = charts.build_chart_bundle(state) if ready else {"available": False}
+    if chart_bundle.get("available"):
+        storage.save_state(rfx_id, state)  # persist award_scenario snapshot from live calc
+    audit_strip = charts.audit_trust_strip(state)
     return render(
         request,
         "compare.html",
@@ -83,6 +87,8 @@ def compare_page(request: Request, rfx_id: str, status: str = "open"):
         exc_counts=exc_counts,
         filter_status=filter_status,
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
+        charts=chart_bundle,
+        audit_strip=audit_strip,
     )
 
 
@@ -234,6 +240,11 @@ def award_page(request: Request, rfx_id: str):
     if live.get("available") and not life.get("can_freeze"):
         lock_rationale_prefill = award_ask.default_lock_rationale(state, live)
 
+    from core import charts
+
+    chart_bundle = charts.build_chart_bundle(state, live=live if live.get("available") else None)
+    audit_strip = charts.audit_trust_strip(state)
+
     return render(
         request,
         "award.html",
@@ -262,6 +273,8 @@ def award_page(request: Request, rfx_id: str):
         draft_recommendation_summary=draft_summary,
         award_premades=award_ask.PREMADES,
         lock_rationale_prefill=lock_rationale_prefill,
+        charts=chart_bundle,
+        audit_strip=audit_strip,
     )
 
 
@@ -449,6 +462,18 @@ def export_award_notify(rfx_id: str):
     award_actions.record_export_notification(state)
     storage.save_state(rfx_id, state)
     return RedirectResponse(f"/rfx/{rfx_id}/export.xlsx?notified=1", status_code=303)
+
+@router.get("/rfx/{rfx_id}/audit.csv")
+def export_audit_csv(rfx_id: str):
+    """Small audit trail CSV (reviews, freeze, notices) — not a new workbook format."""
+    state = load_or_404(rfx_id)
+    data = export.audit_trail_csv(state)
+    return Response(
+        data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="audit-{rfx_id}.csv"'},
+    )
+
 
 @router.get("/rfx/{rfx_id}/export.xlsx")
 def export_xlsx(rfx_id: str, provisional: bool = False):

@@ -1,0 +1,13 @@
+{# One-line trust strip — freeze / notices / overrides with deep links. #}
+{% if audit_strip %}
+<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="audit-trust-strip" role="status">
+  <span><span class="font-medium text-slate-800">Last freeze:</span> {{ audit_strip.freeze_label }}{% if audit_strip.freeze_detail %} <span class="text-slate-500 font-mono">({{ audit_strip.freeze_detail }})</span>{% endif %}</span>
+  <span><span class="font-medium text-slate-800">Notices sent:</span> {{ audit_strip.notices_sent }}</span>
+  <span><span class="font-medium text-slate-800">Buyer overrides:</span> {{ audit_strip.buyer_overrides }}</span>
+  <span class="ml-auto flex flex-wrap gap-x-3 text-slate-600">
+    <a href="{{ audit_strip.links.review }}" class="underline hover:text-slate-900" title="Anomalies & overrides on Compare">Review log</a>
+    <a href="{{ audit_strip.links.outbox }}" class="underline hover:text-slate-900">Outbox</a>
+    <a href="{{ audit_strip.links.ai_log }}" class="underline hover:text-slate-900">AI log</a>
+  </span>
+</div>
+{% endif %}

@@ -1,0 +1,24 @@
+{# Compact allocation strip for Award Who-wins — no clutter. #}
+{% if charts and charts.available and not charts.allocation.empty %}
+<div class="px-4 py-3 border-b border-slate-100 bg-slate-50/60" data-testid="award-charts-compact">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+    <span class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Share of award</span>
+    <span class="text-[10px] text-slate-500 font-mono">{{ charts.caption }}</span>
+  </div>
+  <div class="flex h-2.5 rounded overflow-hidden bg-slate-200" title="Allocation by extended ₹">
+    {% set palette = ['bg-slate-800', 'bg-sky-600', 'bg-emerald-600', 'bg-amber-600', 'bg-violet-600'] %}
+    {% for it in charts.allocation.bars %}
+    <div class="{{ palette[loop.index0 % 5] }}" style="width: {{ it.extended_pct }}%" title="{{ it.vendor }}: {{ it.extended_pct }}%"></div>
+    {% endfor %}
+  </div>
+  <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+    {% for it in charts.allocation.bars %}
+    <span class="inline-flex items-center gap-1.5">
+      <span class="inline-block w-2 h-2 rounded-sm {{ ['bg-slate-800','bg-sky-600','bg-emerald-600','bg-amber-600','bg-violet-600'][loop.index0 % 5] }}"></span>
+      {{ it.vendor.split()[0] }} {{ it.extended_pct }}% · {{ it.lines }} ln
+    </span>
+    {% endfor %}
+    <span class="text-slate-500">Coverage {{ charts.coverage.label }}</span>
+  </div>
+</div>
+{% endif %}

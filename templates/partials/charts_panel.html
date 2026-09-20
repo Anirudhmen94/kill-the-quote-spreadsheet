@@ -1,0 +1,68 @@
+{# Chart strip — allocation / coverage / scenario cost from engine data only. #}
+{% if charts and charts.available %}
+<section class="mt-4 rounded-lg border border-slate-200 bg-white overflow-hidden" data-testid="charts-panel" aria-label="Award charts">
+  <div class="px-4 py-3 border-b border-slate-100 flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500">{{ charts_heading or 'Allocation & coverage' }}</h2>
+    <span class="text-[11px] text-slate-500 font-mono" data-testid="charts-caption">{{ charts.caption }}</span>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+    {# Allocation #}
+    <div class="px-4 py-3" data-testid="chart-allocation">
+      <div class="text-xs font-medium text-slate-800 mb-2">{{ charts.allocation.title }}</div>
+      {% if charts.allocation.empty %}
+      <p class="text-xs text-slate-500">No awarded lines yet.</p>
+      {% else %}
+      <ul class="space-y-2">
+        {% for it in charts.allocation.bars %}
+        <li>
+          <div class="flex justify-between gap-2 text-[11px] text-slate-700 mb-0.5">
+            <span class="truncate font-medium" title="{{ it.vendor }}">{{ it.vendor }}</span>
+            <span class="tabular-nums shrink-0">{{ it.lines }} ln · {{ it.extended_inr|inr }}</span>
+          </div>
+          <div class="h-2 rounded bg-slate-100 overflow-hidden" title="{{ it.extended_pct }}% of extended ₹">
+            <div class="h-full rounded bg-slate-800" style="width: {{ it.extended_pct }}%"></div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="mt-2 text-[11px] text-slate-500 tabular-nums">Total {{ charts.allocation.total_lines }} lines · {{ charts.allocation.total_extended_inr|inr }}</div>
+      {% endif %}
+    </div>
+    {# Coverage #}
+    <div class="px-4 py-3" data-testid="chart-coverage">
+      <div class="text-xs font-medium text-slate-800 mb-2">{{ charts.coverage.title }}</div>
+      {% if charts.coverage.empty %}
+      <p class="text-xs text-slate-500">No line coverage data.</p>
+      {% else %}
+      <div class="text-sm font-semibold tabular-nums text-slate-900">{{ charts.coverage.label }}</div>
+      <div class="mt-2 h-3 rounded bg-slate-100 overflow-hidden flex" title="{{ charts.coverage.pct_covered }}% awarded">
+        <div class="h-full bg-emerald-600" style="width: {{ charts.coverage.pct_covered }}%"></div>
+        {% if charts.coverage.uncovered %}
+        <div class="h-full bg-rose-300" style="width: {{ 100 - charts.coverage.pct_covered }}%"></div>
+        {% endif %}
+      </div>
+      <div class="mt-1.5 flex flex-wrap gap-3 text-[11px] text-slate-600">
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-emerald-600 mr-1"></span>Awarded {{ charts.coverage.covered }}</span>
+        <span><span class="inline-block w-2 h-2 rounded-sm bg-rose-300 mr-1"></span>Uncovered {{ charts.coverage.uncovered }}</span>
+      </div>
+      {% if charts.coverage.market_label %}
+      <div class="mt-2 text-[11px] text-slate-500">Market quotes: {{ charts.coverage.market_label }}</div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {# Scenario cost #}
+    <div class="px-4 py-3" data-testid="chart-scenario-cost">
+      <div class="text-xs font-medium text-slate-800 mb-2">{{ charts.cost.title }}</div>
+      {% if charts.cost.empty %}
+      <p class="text-xs text-slate-500">No scenario total yet.</p>
+      {% else %}
+      <div class="text-xl font-semibold tabular-nums text-slate-900">{{ charts.cost.total_extended_inr|inr }} <span class="text-xs font-normal text-slate-500">/ yr</span></div>
+      <div class="mt-1 text-[11px] text-slate-600">{{ charts.cost.strategy }}</div>
+      {% if charts.cost.market_label %}
+      <div class="mt-2 text-[11px] text-slate-500">Market note: {{ charts.cost.market_label }}</div>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}

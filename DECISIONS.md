@@ -32,10 +32,11 @@ Open any event from the home list, then use the paths below (`/rfx/<id>/…`).
 3. **Compare** — normalised INR/pc matrix, evidence drawer, anomalies + three actions, Ask drawer link, filters.  
 4. **Award** — Ask-before-you-lock (premade + live), per-vendor why packs, one-click Lock (complete or auto-partial), Send stub notices, success banners.  
 5. **Trust chrome** — cell states, vendor data version / snapshots, recommendation before lock, historical freeze when data moves.
+6. **Charts / exports / audit** — Compare allocation & coverage bars (engine data); Award compact share strip; workbook sheet names + freeze metadata; trust strip (freeze / notices / overrides).
 
 ## What we deliberately left out
 
-Real SMTP / vendor portals · inventing “same as last year” prices · auto-zeroing missing freight or footnote discounts · multi-buyer auth / ERP · private blob ACLs · guaranteeing sub-4s five-file live extract · winner-takes-all as default · charts/exports polish (Phase C paused) · interview lifecycle/demo strips in the main buyer UI · burying Ask only as a Compare popup.
+Real SMTP / vendor portals · inventing “same as last year” prices · auto-zeroing missing freight or footnote discounts · multi-buyer auth / ERP · private blob ACLs · guaranteeing sub-4s five-file live extract · winner-takes-all as default · interview lifecycle/demo strips in the main buyer UI · burying Ask only as a Compare popup.
 
 ## Where the interesting problem is
 
