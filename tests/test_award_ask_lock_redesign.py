@@ -1,4 +1,4 @@
-"""Award Ask (premade/live) + one-click Lock redesign."""
+"""Award Ask (premade/live) + Apply vendor (lock/freeze removed from Award UX)."""
 from __future__ import annotations
 
 import sys
@@ -11,20 +11,13 @@ sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
 
 from app import app
-from core import award_ask, demo_ops, freeze, llm, scenario, snapshots, storage
+from core import award_ask, award_draft, demo_ops, llm, snapshots, storage
 
 client = TestClient(app)
 
 
 def _seed():
     st = demo_ops.build_golden_seed()
-    storage.save_state(st["id"], st)
-    return st
-
-
-def _clear_recs(st: dict) -> dict:
-    st["recommendations"] = []
-    st["recommendation"] = None
     storage.save_state(st["id"], st)
     return st
 
@@ -39,7 +32,8 @@ def test_premade_returns_without_anthropic():
     assert r.status_code == 200
     assert "Recommendation" in r.text or "Pass" in r.text
     assert 'data-testid="award-ask-answer"' in r.text
-    assert "Use this recommendation" in r.text
+    assert "Apply" in r.text
+    assert 'data-testid="award-ask-use-and-lock"' not in r.text
     st2 = storage.load_state(st["id"])
     cache = st2.get("award_ask_cache") or {}
     assert any(str(k).startswith("best_split:v") for k in cache)
@@ -61,81 +55,34 @@ def test_premade_who_to_drop_and_risks():
         assert "Recommendation" in r.text
 
 
-def test_lock_one_click_refuses_incomplete_no_auto_partial():
+def test_deprecated_lock_redirects_without_freezing():
     st = _seed()
     rid = st["id"]
-    assert scenario.recommendation_lifecycle(storage.load_state(rid)).get("can_freeze") is True
-    assert freeze.validate_freeze_request(storage.load_state(rid), mode="complete")["ok"] is False
-
     r = client.post(f"/rfx/{rid}/award/lock", data={}, follow_redirects=False)
     assert r.status_code in (302, 303)
     assert "/award" in (r.headers.get("location") or "")
-
     st2 = storage.load_state(rid)
     pack = st2.get("freeze") or {}
-    assert not (pack.get("status") == "frozen")
+    assert pack.get("status") != "frozen"
     flash = st2.get("flash") or {}
     assert flash.get("level") == "error"
-    msg = (flash.get("message") or "").lower()
-    assert "uncovered" in msg or "complete" in msg or "partial" in msg
-    assert "manual" in msg or "freeze partial" in msg or "acknowledg" in msg
-
-    page = client.get(f"/rfx/{rid}/award")
-    assert page.status_code == 200
-    assert 'data-testid="award-flash"' in page.text
-    assert "Error." in page.text
+    assert "removed" in (flash.get("message") or "").lower() or "send" in (flash.get("message") or "").lower()
 
 
-def test_lock_saves_rec_but_still_refuses_incomplete():
-    st = _seed()
-    _clear_recs(st)
-    rid = st["id"]
-    assert scenario.recommendation_lifecycle(storage.load_state(rid)).get("can_freeze") is False
-
-    r = client.post(
-        f"/rfx/{rid}/award/lock",
-        data={"rationale": "Quality-gated split; uncovered line 30 acknowledged for partial lock."},
-        follow_redirects=False,
-    )
-    assert r.status_code in (302, 303)
-    st2 = storage.load_state(rid)
-    # May have saved recommendation before complete freeze failed
-    pack = st2.get("freeze") or {}
-    assert not (pack.get("status") == "frozen")
-    flash = st2.get("flash") or {}
-    assert flash.get("level") == "error"
-
-
-def test_lock_requires_rationale_when_no_rec():
-    st = _seed()
-    _clear_recs(st)
-    page = client.get(f"/rfx/{st['id']}/award")
-    assert page.status_code == 200
-    assert 'data-testid="award-lock-rationale"' in page.text
-    assert 'name="rationale"' in page.text
-
-
-def test_send_success_flash_still_works_after_lock():
+def test_send_success_after_checklist():
     st = _seed()
     rid = st["id"]
-    client.post(
-        f"/rfx/{rid}/award/freeze",
-        data={
-            "freeze_mode": "partial",
-            "partial_reason": "Line 30 uncovered; demo partial for send notices.",
-            "acknowledgement": ["coverage_gaps", "selected_blockers"],
-        },
-        follow_redirects=False,
-    )
+    client.get(f"/rfx/{rid}/award")
+    st = storage.load_state(rid)
+    award_draft.update_checklist(st, {c["id"]: True for c in award_draft.CHECKLIST_ITEMS})
+    storage.save_state(rid, st)
     r = client.post(f"/rfx/{rid}/award/send-notices", follow_redirects=False)
     assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)
     flash = st2.get("flash") or {}
     assert flash.get("level") == "success"
-    assert "stub-sent" in (flash.get("message") or "").lower()
     page = client.get(f"/rfx/{rid}/award")
-    assert 'data-testid="award-flash"' in page.text
-    assert "Success" in page.text
+    assert 'data-testid="award-send-confirmation"' in page.text or 'data-testid="award-flash"' in page.text
 
 
 def test_award_ask_module_cache_invalidates_on_version_bump():

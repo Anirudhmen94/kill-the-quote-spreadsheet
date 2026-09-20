@@ -187,107 +187,42 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 
 @router.get("/rfx/{rfx_id}/award", response_class=HTMLResponse)
 def award_page(request: Request, rfx_id: str):
-    from core import award_packs, scenario
+    """Buyer Award workflow: Ask → top-2 → assign by line → checks → Send → Export."""
+    from core import award_ask, award_draft, charts
 
     state = load_or_404(rfx_id)
     live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
     if live.get("available"):
+        award_draft.ensure_award_draft(state, live)
         storage.save_state(rfx_id, state)
-    cmp = live.get("cmp") or engine.build_comparison(state)
-    split = live.get("split")
-    current_rec = next((r for r in state.get("recommendations", []) if r.get("status") == "current"), None)
-    historical = [r for r in state.get("recommendations", []) if r.get("status") in ("stale", "superseded") or r.get("legacy")]
-    pack = freeze.current_freeze(state)
+
     flash = award_actions.pop_flash(state)
     if flash is not None:
-        # flash consumed — persist cleared flash
         storage.save_state(rfx_id, state)
 
-    life = scenario.recommendation_lifecycle(state)
-    freeze_check_complete = freeze.validate_freeze_request(state, mode="complete")
-    gates = live.get("gates") or cmp.get("gates")
-    conditional = live.get("conditional_discounts") if live.get("available") else None
-    enriched_rows = award_packs.enrich_split_rows(split, cmp, gates) if split else []
-    if split is not None:
-        # Keep gap_display on the live split object for the optional auditor table
-        split = {**split, "rows": enriched_rows}
-    vendor_packs = award_packs.vendor_award_packs(
-        split,
-        cmp=cmp,
-        gates=gates,
-        total_extended_inr=(live.get("total_extended_inr") if live.get("available") else None),
-    )
-    uncovered = award_packs.uncovered_line_rows(split)
-    notice_preview = award_packs.notice_previews(
-        state, freeze_pack=pack, live=live if live.get("available") else None, vendor_packs=vendor_packs
-    )
-    unconfirmed = award_packs.unconfirmed_discounts(conditional)
-    blocking = exc_mod.has_blocking_exceptions(state)
-    freeze_checklist = scenario.freeze_ux_checklist(
-        state,
-        live=live if live.get("available") else None,
-        life=life,
-        has_blocking_exceptions=blocking,
-        freeze_check_complete=freeze_check_complete,
-    )
-    draft_summary = ""
-    if live.get("available") and freeze_checklist.get("needs_save"):
-        draft_summary = snapshots.build_live_recommendation_summary(live, vendor_packs=vendor_packs)
-
-    from core import award_ask
-
-    lock_rationale_prefill = ""
-    if live.get("available") and not life.get("can_freeze"):
-        lock_rationale_prefill = award_ask.default_lock_rationale(state, live)
-
-    from core import charts, event_status
-
-    chart_bundle = charts.build_chart_bundle(state, live=live if live.get("available") else None)
+    draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
+    shortlist = award_draft.suggest_top2(state, live if live.get("available") else None) if live.get("available") else {"vendors": [], "explanation": "", "enough": False}
+    assignment_rows = award_draft.line_assignment_rows(state, live if live.get("available") else None) if live.get("available") else []
+    totals = award_draft.draft_totals(state, live if live.get("available") else None) if live.get("available") else {"total_extended_inr": 0, "covered_line_count": 0, "uncovered_lines": []}
+    checklist_ready = award_draft.checklist_complete(draft) if draft else False
     audit_strip = charts.audit_trust_strip(state)
-    lock_cta = event_status.derive_lock_cta(
-        state,
-        live=live if live.get("available") else None,
-        life=life,
-        freeze_check_complete=freeze_check_complete,
-        has_blocking_exceptions=blocking,
-    )
-    freeze_validity = event_status.freeze_validity(pack) if pack else None
 
     return render(
         request,
         "award.html",
         state=state,
-        cmp=cmp,
-        split=split,
         live=live,
-        current_rec=current_rec,
-        historical_recs=historical,
-        gates=gates,
-        freeze_pack=pack,
-        freeze_validity=freeze_validity,
         active="award",
-        has_blocking_exceptions=blocking,
         flash=flash,
-        recommendation_lifecycle=life,
-        market_quote_coverage=cmp.get("market_quote_coverage"),
-        scenario_award_coverage=(live.get("scenario") or {}).get("scenario_award_coverage")
-        if live.get("available")
-        else (cmp.get("scenario_award_coverage") if isinstance(cmp, dict) else None),
-        freeze_check_complete=freeze_check_complete,
-        discount_confirmations=state.get("discount_confirmations") or {},
-        conditional_discounts=conditional,
-        vendor_packs=vendor_packs,
-        uncovered_lines=uncovered,
-        notice_preview=notice_preview,
-        unconfirmed_discounts=unconfirmed,
-        freeze_checklist=freeze_checklist,
-        freeze_next_step=freeze_checklist.get("human_blocked_reason"),
-        draft_recommendation_summary=draft_summary,
         award_premades=award_ask.PREMADES,
-        lock_rationale_prefill=lock_rationale_prefill,
-        charts=chart_bundle,
+        award_draft=draft,
+        shortlist=shortlist,
+        assignment_rows=assignment_rows,
+        draft_totals=totals,
+        checklist_items=award_draft.CHECKLIST_ITEMS,
+        checklist_ready=checklist_ready,
         audit_strip=audit_strip,
-        lock_cta=lock_cta,
+        has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
     )
 
 
@@ -360,6 +295,10 @@ def award_ask_live(request: Request, rfx_id: str, question: str = Form(...)):
                 idx=len(state["chat"]) - 1,
             )
         result["award_shaped"] = True
+        from core import award_draft as _ad
+
+        live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
+        _ad.attach_apply_actions(state, result, live if live.get("available") else None)
         state.setdefault("chat", []).append(result)
         storage.save_state(rfx_id, state)
         return render(
@@ -376,94 +315,158 @@ def award_ask_live(request: Request, rfx_id: str, question: str = Form(...)):
 
 @router.post("/rfx/{rfx_id}/award/use-and-lock/{idx}", response_class=HTMLResponse)
 async def award_use_and_lock(request: Request, rfx_id: str, idx: int):
-    """Path A: save Ask suggestion as recommendation, then lock_award."""
-    from core import award_ask
-
+    """Deprecated: freeze/lock removed from Award UX — redirect to Award."""
     state = load_or_404(rfx_id)
-    award_url = f"/rfx/{rfx_id}/award"
-
-    def _after():
-        if request.headers.get("HX-Request"):
-            return hx_redirect(award_url)
-        return RedirectResponse(award_url, status_code=303)
-
-    chat = state.get("chat", [])
-    if idx < 0 or idx >= len(chat):
-        award_actions.push_flash(state, "Answer not found.", level="error")
-        storage.save_state(rfx_id, state)
-        return _after()
-    m = chat[idx]
-    ok, msg = snapshots.can_save_recommendation(state, m)
-    if not ok:
-        award_actions.push_flash(state, msg, level="error")
-        storage.save_state(rfx_id, state)
-        return _after()
-    try:
-        snapshots.save_recommendation_from_answer(state, m, idx)
-        out = award_ask.lock_award(state, rationale=None)
-    except (ValueError, freeze.FreezeValidationError) as e:
-        award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
-        storage.save_state(rfx_id, state)
-        return _after()
-
-    pack = out["pack"]
-    mode_label = out.get("mode") or pack.get("freeze_mode") or "complete"
     award_actions.push_flash(
         state,
-        f"Recommendation saved and award locked successfully ({mode_label}). "
-        f"Snapshot {pack.get('calculation_snapshot_id')}. Next: send award & regret emails below.",
-        level="success",
-        cta_href=f"{award_url}#lock-send",
-        cta_label="Continue: send emails",
+        "Lock / Use & lock was removed. Use Apply this vendor on Ask answers, then Send award drafts.",
+        level="error",
     )
     storage.save_state(rfx_id, state)
-    return _after()
+    if request.headers.get("HX-Request"):
+        return hx_redirect(f"/rfx/{rfx_id}/award")
+    return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/award/lock", response_class=HTMLResponse)
 async def award_lock(request: Request, rfx_id: str, rationale: str = Form("")):
-    """One-click lock: optional save-rec → complete freeze only (no auto-partial)."""
-    from core import award_ask
-
+    """Deprecated: Lock award removed from Award UX — redirect."""
     state = load_or_404(rfx_id)
-    award_url = f"/rfx/{rfx_id}/award#lock-send"
-
-    def _after():
-        if request.headers.get("HX-Request"):
-            return hx_redirect(f"/rfx/{rfx_id}/award")
-        return RedirectResponse(award_url, status_code=303)
-
-    try:
-        out = award_ask.lock_award(state, rationale=rationale or None)
-    except (ValueError, freeze.FreezeValidationError) as e:
-        award_actions.push_flash(state, _freeze_error_flash(str(e)), level="error")
-        storage.save_state(rfx_id, state)
-        return _after()
-
-    pack = out["pack"]
-    mode_label = out.get("mode") or pack.get("freeze_mode") or "complete"
-    extra = " Recommendation saved." if out.get("saved_recommendation") else ""
     award_actions.push_flash(
         state,
-        f"Award locked successfully ({mode_label}). Snapshot {pack.get('calculation_snapshot_id')}.{extra} "
-        "Next: send award & regret emails below.",
-        level="success",
-        cta_href=award_url,
-        cta_label="Continue: send emails",
+        "Lock award was removed. Assign lines, tick the rule checks, then Send award drafts.",
+        level="error",
     )
     storage.save_state(rfx_id, state)
-    return _after()
+    if request.headers.get("HX-Request"):
+        return hx_redirect(f"/rfx/{rfx_id}/award")
+    return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
+
+
+def _parse_draft_form(form) -> tuple[dict[str, str], dict[str, bool]]:
+    """Parse line_* selects and check_* boxes from the Award draft form."""
+    from core import award_draft as _ad
+
+    allocation: dict[str, str] = {}
+    checklist = {c["id"]: False for c in _ad.CHECKLIST_ITEMS}
+    for key in form.keys():
+        if key.startswith("line_"):
+            line_key = key[len("line_") :]
+            val = form.get(key)
+            if val:
+                allocation[str(line_key)] = str(val)
+        elif key.startswith("check_"):
+            cid = key[len("check_") :]
+            if cid in checklist:
+                checklist[cid] = str(form.get(key) or "").lower() in ("true", "on", "1", "yes")
+    return allocation, checklist
+
+
+@router.post("/rfx/{rfx_id}/award/save-draft", response_class=HTMLResponse)
+async def award_save_draft(request: Request, rfx_id: str):
+    from core import award_draft
+
+    state = load_or_404(rfx_id)
+    form = await request.form()
+    allocation, checklist = _parse_draft_form(form)
+    try:
+        award_draft.update_allocation(state, allocation)
+        award_draft.update_checklist(state, checklist)
+        award_actions.push_flash(state, "Award draft assignments saved.")
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+    storage.save_state(rfx_id, state)
+    return RedirectResponse(f"/rfx/{rfx_id}/award#assign-by-line", status_code=303)
+
+
+@router.post("/rfx/{rfx_id}/award/apply-vendor", response_class=HTMLResponse)
+async def award_apply_vendor(
+    request: Request,
+    rfx_id: str,
+    vendor_id: str = Form(...),
+    line_nos: str = Form(""),
+):
+    from core import award_draft
+
+    state = load_or_404(rfx_id)
+    lines = []
+    for part in (line_nos or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            lines.append(int(part))
+    try:
+        out = award_draft.apply_vendor_to_lines(
+            state, vendor_id, lines or None
+        )
+        n = len(out["applied_lines"])
+        award_actions.push_flash(
+            state,
+            f"Applied {out['vendor_name']} to {n} line(s) in the draft. Review assignments, then Send.",
+            cta_href=f"/rfx/{rfx_id}/award#assign-by-line",
+            cta_label="Review assignments",
+        )
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+    storage.save_state(rfx_id, state)
+    if request.headers.get("HX-Request"):
+        return hx_redirect(f"/rfx/{rfx_id}/award#assign-by-line")
+    return RedirectResponse(f"/rfx/{rfx_id}/award#assign-by-line", status_code=303)
+
+
+@router.post("/rfx/{rfx_id}/award/apply-split", response_class=HTMLResponse)
+async def award_apply_split(request: Request, rfx_id: str, chat_idx: int = Form(-1)):
+    from core import award_draft
+
+    state = load_or_404(rfx_id)
+    form = await request.form()
+    idx = int(form.get("chat_idx") or chat_idx or -1)
+    chat = state.get("chat") or []
+    allocation = None
+    if 0 <= idx < len(chat):
+        allocation = (chat[idx].get("apply_all_split") or {}).get("allocation")
+    if not allocation:
+        # Fall back to quality-gated default
+        live = snapshots.live_award_calculation(state)
+        top = award_draft.suggest_top2(state, live)
+        allocation = award_draft.default_allocation(state, live, shortlist_ids=top["shortlist_ids"])
+    try:
+        award_draft.update_allocation(state, {str(k): str(v) for k, v in allocation.items()})
+        award_actions.push_flash(
+            state,
+            "Applied suggested split to the award draft. Tick the rule checks, then Send.",
+            cta_href=f"/rfx/{rfx_id}/award#assign-by-line",
+            cta_label="Review assignments",
+        )
+    except ValueError as e:
+        award_actions.push_flash(state, str(e), level="error")
+    storage.save_state(rfx_id, state)
+    if request.headers.get("HX-Request"):
+        return hx_redirect(f"/rfx/{rfx_id}/award#assign-by-line")
+    return RedirectResponse(f"/rfx/{rfx_id}/award#assign-by-line", status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/award/send-notices", response_class=HTMLResponse)
-def send_award_notices(request: Request, rfx_id: str, vendor_id: str = Form("")):
+async def send_award_notices(request: Request, rfx_id: str, vendor_id: str = Form("")):
+    from core import award_draft
+
     state = load_or_404(rfx_id)
+    form = await request.form()
+    # Prefer form allocation/checklist when posted from the draft form
+    if any(str(k).startswith("line_") for k in form.keys()):
+        allocation, checklist = _parse_draft_form(form)
+        try:
+            award_draft.update_allocation(state, allocation)
+            award_draft.update_checklist(state, checklist)
+        except ValueError as e:
+            award_actions.push_flash(state, str(e), level="error")
+            storage.save_state(rfx_id, state)
+            return RedirectResponse(f"/rfx/{rfx_id}/award#assign-by-line", status_code=303)
     try:
         award_actions.send_award_notices(state, vendor_id=vendor_id or None)
     except ValueError as e:
         award_actions.push_flash(state, str(e), level="error")
         storage.save_state(rfx_id, state)
-        return RedirectResponse(f"/rfx/{rfx_id}/award#award-step-3", status_code=303)
+        return RedirectResponse(f"/rfx/{rfx_id}/award#rule-checks", status_code=303)
     storage.save_state(rfx_id, state)
     return RedirectResponse(f"/rfx/{rfx_id}/award", status_code=303)
 

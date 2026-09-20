@@ -287,7 +287,9 @@ def test_repair_invalid_complete_historical():
     assert pack2["status"] == "frozen"
 
 
-def test_award_page_shows_frozen_partial_banner():
+def test_award_page_no_frozen_partial_banner_but_status_partial():
+    from core import event_status
+
     st = _seed()
     rid = st["id"]
     freeze.freeze_award(
@@ -299,8 +301,12 @@ def test_award_page_shows_frozen_partial_banner():
     storage.save_state(rid, st)
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
-    assert "FROZEN PARTIAL" in page.text
-    assert "30" in page.text
+    # Freeze banner removed from Award buyer UX
+    assert "FROZEN PARTIAL" not in page.text
+    assert "Lock award" not in page.text
+    assert "Send award drafts" in page.text
+    disp = event_status.derive_event_display_status(storage.load_state(rid))
+    assert disp["key"] == event_status.STATUS_PARTIAL_FROZEN
 
 
 def test_needed_partial_acknowledgements_removed():

@@ -23,8 +23,8 @@ PREMADES: list[dict[str, str]] = [
     },
     {
         "id": "biggest_risks",
-        "label": "What are the biggest risks if we lock now?",
-        "question": "What are the biggest risks if we lock now?",
+        "label": "What are the biggest risks if we send now?",
+        "question": "What are the biggest risks if we send award drafts now?",
     },
 ]
 
@@ -161,8 +161,8 @@ def _narrative_biggest_risks(live: dict, packs: list[dict]) -> str:
     if uncovered:
         risks.append(
             f"**Coverage gap** — line(s) {', '.join(str(x) for x in uncovered)} have no "
-            "awardable quote among Pass vendors. Complete freeze is blocked; Lock will "
-            "complete freeze is blocked — use Manual freeze partial with real acknowledgements and reason."
+            "awardable quote among Pass vendors. Those lines stay uncovered in the draft "
+            "until resolved on Compare / Anomalies."
         )
     if by_kind.get("needs_review"):
         risks.append(
@@ -184,7 +184,7 @@ def _narrative_biggest_risks(live: dict, packs: list[dict]) -> str:
     return (
         "## Recommendation\n\n"
         f"**Readiness:** {readiness}\n\n"
-        f"### Biggest risks if you lock now\n\n{risk_md}\n\n"
+        f"### Biggest risks if you send award drafts now\n\n{risk_md}\n\n"
         "_Derived from engine readiness / blockers — not a live model call._"
     )
 
@@ -235,7 +235,10 @@ def compute_premade(state: dict, prompt_id: str) -> dict:
         "at": _now(),
         "status": "current",
     }
-    return snapshots.attach_answer_metadata(state, raw, snap)
+    from . import award_draft
+
+    out = snapshots.attach_answer_metadata(state, raw, snap)
+    return award_draft.attach_apply_actions(state, out, live)
 
 
 def get_or_build_premade(state: dict, prompt_id: str) -> dict:

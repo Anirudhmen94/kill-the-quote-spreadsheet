@@ -10,7 +10,8 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi.testclient import TestClient
 
-from core import awardability, demo_ops, gates, scenario, snapshots
+from app import app
+from core import awardability, demo_ops, gates, scenario, snapshots, storage
 from core.web import templates
 from routes import ask as ask_routes
 
@@ -120,72 +121,24 @@ def test_discount_confirm_route_persists_actor_and_snapshot(monkeypatch, tmp_pat
     assert any(e.get("action") == "confirm_discount" for e in log)
 
 
-def test_award_unsaved_banner_appears_once():
-    """Template smoke: with live calc and no saved rec, inline save form + Ask secondary."""
-    from core import award_packs
-
+def test_award_page_ask_assign_send_no_lock():
+    """Award page: Ask + top-2 + assign + checks + send; no freeze/lock UX."""
     st = _seed()
     st["recommendations"] = []
     st["recommendation"] = None
-    live = snapshots.live_award_calculation(st)
-    life = scenario.recommendation_lifecycle(st)
-    assert life.get("banner") in (None, "")  # freeze panel must not duplicate
-    packs = award_packs.vendor_award_packs(live["split"], cmp=live["cmp"], gates=live["gates"])
-    uncovered = award_packs.uncovered_line_rows(live["split"])
-    unconfirmed = award_packs.unconfirmed_discounts(live.get("conditional_discounts"))
-    checklist = scenario.freeze_ux_checklist(
-        st, live=live, life=life, has_blocking_exceptions=False
-    )
-    draft = snapshots.build_live_recommendation_summary(live, vendor_packs=packs)
-    html = templates.get_template("award.html").render(
-        {
-            "request": mock.Mock(),
-            "state": st,
-            "cmp": live["cmp"],
-            "split": live["split"],
-            "live": live,
-            "current_rec": None,
-            "historical_recs": [],
-            "gates": live.get("gates"),
-            "freeze_pack": None,
-            "callouts": [],
-            "active": "award",
-            "has_blocking_exceptions": False,
-            "flash": None,
-            "recommendation_lifecycle": life,
-            "market_quote_coverage": live["cmp"].get("market_quote_coverage"),
-            "freeze_check_complete": {"ok": False, "errors": []},
-            "discount_confirmations": {},
-            "conditional_discounts": live.get("conditional_discounts"),
-            "vendor_packs": packs,
-            "uncovered_lines": uncovered,
-            "notice_preview": {"frozen": False, "notices": [], "regrets": []},
-            "unconfirmed_discounts": unconfirmed,
-            "freeze_checklist": checklist,
-            "freeze_next_step": checklist.get("human_blocked_reason"),
-            "draft_recommendation_summary": draft,
-            "blended_rate_banner": None,
-            "ai_ok": False,
-            "model": "",
-            "storage": "local",
-            "rfx_id": st["id"],
-            "data_status": None,
-            "version_events": [],
-            "vendor_data_version": live["vendor_data_version"],
-            "demo_mode": True,
-            "lifecycle": "award",
-            "demo_prompts": [],
-        }
-    )
-    # Redesign: Ask + Lock (rationale on lock form) — no old checklist/save panel
-    assert "Ask before you lock" in html
-    assert "Lock award" in html
-    assert 'data-testid="award-lock-rationale"' in html
+    storage.save_state(st["id"], st)
+    client = TestClient(app)
+    r = client.get(f"/rfx/{st['id']}/award")
+    assert r.status_code == 200
+    html = r.text
+    assert "Ask the analyst" in html
+    assert "Suggest top 2" in html
+    assert "Assign by line" in html
+    assert "Send award drafts" in html
+    assert "Lock award" not in html
+    assert 'data-testid="award-lock-rationale"' not in html
     assert "Ready to freeze?" not in html
     assert 'data-testid="freeze-blocked-plain"' not in html
-    # Confirm control present for unconfirmed discounts
-    assert "Confirm into official total" in html or "Confirm" in html
-    assert "Conditional discount" in html or "conditional discount" in html.lower()
 
 
 def test_narrative_validation_fallback_on_contradiction():

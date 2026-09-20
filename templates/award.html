@@ -2,17 +2,15 @@
 {% from "macros.html" import tip %}
 {% block title %}Award · {{ state.rfx.title }}{% endblock %}
 {% block content %}
-{% set rec = current_rec %}
-{% set freeze_validity = freeze_validity if freeze_validity is defined else none %}
-{% set frozen = freeze_pack and freeze_pack.status == 'frozen' and freeze_validity != 'requires_review' and freeze_validity != 'invalid_historical' and (freeze_pack.integrity or '') != 'invalid_historical_freeze' %}
-{% set invalid_hist = freeze_pack and ((freeze_pack.integrity or '') == 'invalid_historical_freeze' or freeze_pack.status == 'requires_review' or freeze_validity in ['requires_review', 'invalid_historical']) %}
+{% set draft = award_draft if award_draft is defined else none %}
+{% set confirmation = (flash.confirmation if flash and flash.confirmation else none) or (draft.send_confirmation if draft and draft.sent else none) %}
 <div class="flex flex-wrap items-start justify-between gap-4">
   <div>
     <h1 class="inline-flex items-center gap-1.5 text-2xl font-semibold tracking-tight">
       Award
-      {{ tip("Default strategy: cheapest per line among vendors who cleared knockout quality checks.", aria="Award help", width="w-64") }}
+      {{ tip("Suggest top 2 Pass vendors, assign by line, tick checks, then send award drafts and regrets.", aria="Award help", width="w-64") }}
     </h1>
-    <p class="mt-1 text-sm text-slate-600">Ask before you lock · who wins · lock &amp; send. Maths in code; narrative from the analyst.</p>
+    <p class="mt-1 text-sm text-slate-600">Ask the analyst · shortlist top 2 · assign by line · check · send drafts.</p>
     <div class="mt-2">{% include "partials/event_status_badge.html" %}</div>
   </div>
 </div>
@@ -50,14 +48,48 @@
 </div>
 {% endif %}
 
+{# Confirmation dialog after send #}
+{% if confirmation %}
+<div class="mt-4 rounded-xl border-2 border-emerald-500 bg-emerald-50 px-5 py-4 text-emerald-950 shadow-sm" data-testid="award-send-confirmation" role="dialog" aria-labelledby="award-confirm-heading">
+  <h2 id="award-confirm-heading" class="text-lg font-semibold">Award drafts sent</h2>
+  <p class="mt-1 text-sm">
+    Award drafts sent to <strong>{{ confirmation.award_count or (confirmation.award_vendors|length) }}</strong>
+    · regret notices to <strong>{{ confirmation.regret_count or (confirmation.regret_vendors|length) }}</strong>.
+  </p>
+  <div class="mt-3 grid gap-3 sm:grid-cols-2 text-sm">
+    <div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Award drafts</div>
+      <ul class="mt-1 list-disc pl-5">
+        {% for n in confirmation.award_vendors or [] %}
+        <li>{{ n }}</li>
+        {% else %}
+        <li class="list-none text-emerald-800/70">—</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div>
+      <div class="text-xs font-semibold uppercase tracking-wide text-emerald-800/80">Regret notices</div>
+      <ul class="mt-1 list-disc pl-5">
+        {% for n in confirmation.regret_vendors or [] %}
+        <li>{{ n }}</li>
+        {% else %}
+        <li class="list-none text-emerald-800/70">—</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <a href="/rfx/{{ state.id }}/email#outbox" class="inline-block mt-3 text-sm font-medium underline">View Email Outbox</a>
+</div>
+{% endif %}
+
 <div class="mt-6 space-y-8 max-w-5xl">
 
-  {# ========== A. Ask before you lock ========== #}
+  {# ========== 1. Ask the analyst (KEEP, prominent at top) ========== #}
   <section aria-labelledby="award-ask-heading" id="award-ask">
     <div class="rounded-xl border-2 border-slate-900/10 bg-gradient-to-b from-slate-50 to-white shadow-sm overflow-hidden" data-testid="award-ask-card">
       <div class="px-5 py-4 border-b border-slate-200">
-        <h2 id="award-ask-heading" class="text-lg font-semibold text-slate-900">Ask before you lock</h2>
-        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant from the engine; free-ask calls the live analyst.</p>
+        <h2 id="award-ask-heading" class="text-lg font-semibold text-slate-900">Ask the analyst</h2>
+        <p class="mt-1 text-sm text-slate-600">Interrogate this award in plain language. Maths stay in code — premade answers are instant; free-ask calls the live analyst. Use <strong>Apply this vendor</strong> to set the draft assignment — then Send below.</p>
       </div>
 
       <div class="px-5 py-4 space-y-4">
@@ -89,7 +121,7 @@
             hx-disabled-elt="#award-ask-submit, #award-ask-form textarea, #award-ask-premades button"
             class="space-y-2">
             <textarea name="question" rows="2" required
-              placeholder="e.g. If we must cover line 30, which Pass vendor is closest and what does it cost?"
+              placeholder="e.g. Who is best for line 12? What if we give Kraftline all RSC lines?"
               class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-400 disabled:opacity-60"
               data-testid="award-ask-textarea"></textarea>
             <div class="flex flex-wrap items-center gap-3">
@@ -118,293 +150,147 @@
     </div>
   </section>
 
-  {# ========== B. Who wins ========== #}
-  <section aria-labelledby="award-who-wins" id="who-wins">
-    <h2 id="award-who-wins" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Who wins</h2>
+  {# ========== 2. Suggest top 2 ========== #}
+  <section aria-labelledby="award-top2" id="suggest-top2" data-testid="award-top2">
+    <h2 id="award-top2" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Suggest top 2</h2>
     <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
       {% if live and live.available %}
-      <div class="px-4 py-4 border-b border-slate-200 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div class="text-2xl font-semibold tabular-nums text-slate-900">{{ live.total_extended_inr|inr }} <span class="text-sm font-normal text-slate-500">/ yr</span></div>
-          <p class="text-sm text-slate-600 mt-1">{{ live.strategy or 'Quality-gated cheapest per line' }}</p>
-          <div class="text-xs text-slate-500 mt-1.5 font-mono">
-            Snapshot {{ live.snapshot.id }}
-            · Vendor data v{{ live.vendor_data_version }}
-            · Quality-gated scenario: {{ live.covered_line_count }} lines awarded{% if live.uncovered_lines %} · {{ live.uncovered_lines|length }} uncovered{% endif %}{% if market_quote_coverage %} · Market quotes: {{ market_quote_coverage.label }}{% endif %}
-          </div>
-        </div>
-        {% if rec and rec.status == 'current' %}
-        <div class="max-w-sm text-xs text-slate-600">
-          <div class="font-medium text-slate-800">Current recommendation</div>
-          <div class="mt-1 line-clamp-3">{{ (rec.recommendation_markdown or rec.answer or '')[:280] }}{% if (rec.recommendation_markdown or rec.answer or '')|length > 280 %}…{% endif %}</div>
-        </div>
-        {% endif %}
+      <div class="px-4 py-3 border-b border-slate-100 text-sm text-slate-700">
+        {{ shortlist.explanation if shortlist else 'Shortlist Pass vendors with best overall pricing.' }}
       </div>
-
-      {% include "partials/charts_compact.html" %}
-
-      {% if has_blocking_exceptions %}
-      <div class="px-4 py-2 border-b border-amber-200 bg-amber-50 text-amber-950 text-sm">
-        Open anomalies still block a clean freeze.
-        <a href="/rfx/{{ state.id }}/anomalies" class="underline ml-1 font-medium">Resolve on Anomalies</a>
-      </div>
-      {% endif %}
-
-      {% if unconfirmed_discounts %}
-      <div class="px-4 py-3 border-b border-slate-100 bg-slate-50/70 text-xs space-y-2">
-        <div class="font-medium text-slate-800">Conditional discounts not yet confirmed</div>
-        <ul class="space-y-2">
-          {% for d in unconfirmed_discounts %}
-          <li class="rounded border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <div class="font-medium text-slate-800">{{ d.vendor }} · {{ d.pct }}%</div>
-              <div class="text-slate-600">{{ d.condition }}</div>
-              <div class="text-slate-500 mt-0.5">Potential saving {{ d.potential_saving_inr|inr }} · held out of official total</div>
-            </div>
-            <form method="post" action="/rfx/{{ state.id }}/award/confirm-discount" class="shrink-0">
-              <input type="hidden" name="vendor_id" value="{{ d.vendor_id }}">
-              <input type="hidden" name="confirmed_by" value="buyer">
-              <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100">Confirm into official total</button>
-            </form>
-          </li>
-          {% endfor %}
-        </ul>
-      </div>
-      {% endif %}
-
-      {% if vendor_packs %}
+      {% if shortlist and shortlist.vendors %}
       <div class="divide-y divide-slate-100">
-        {% for pack in vendor_packs %}
-        <div class="px-4 py-3">
+        {% for v in shortlist.vendors %}
+        <div class="px-4 py-3" data-testid="award-shortlist-{{ v.vendor_id }}">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <div>
-              <div class="font-medium text-slate-900">{{ pack.vendor }}</div>
-              <div class="text-xs text-slate-500 mt-0.5">{{ pack.lines_won }} line{{ 's' if pack.lines_won != 1 else '' }} · gate {{ pack.gate_grade }}</div>
-            </div>
-            <div class="text-right text-sm">
-              <span class="font-semibold tabular-nums">{{ pack.extended_inr|inr }}</span>
-              <span class="text-slate-500 text-xs ml-1">{{ pack.share_pct }}% share</span>
-            </div>
+            <div class="font-medium text-slate-900">{{ loop.index }}. {{ v.name }}</div>
+            <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-0.5 text-xs">Pass</span>
           </div>
-          <ul class="mt-2 space-y-1 text-xs">
-            {% for ln in pack.lines %}
-            <li class="flex flex-wrap gap-x-3 gap-y-0.5 items-baseline text-slate-700">
-              <span class="text-slate-500 w-8 shrink-0 tabular-nums">L{{ ln.line_no }}</span>
-              <span class="flex-1 min-w-[10rem] truncate" title="{{ ln.description }}">{{ ln.description }}</span>
-              <span class="tabular-nums shrink-0">{% if ln.unit_inr is not none %}₹{{ '%.2f'|format(ln.unit_inr) }}/pc{% endif %}</span>
-              <span class="text-slate-600 flex-[2] min-w-[12rem]">{{ ln.why_reason }}</span>
-            </li>
+          <ul class="mt-2 text-xs text-slate-600 space-y-0.5 list-disc pl-4">
+            {% for w in v.why %}
+            <li>{{ w }}</li>
             {% endfor %}
           </ul>
         </div>
         {% endfor %}
       </div>
       {% else %}
-      <div class="px-4 py-6 text-center text-sm text-slate-500">No lines awarded under the quality-gated split yet.</div>
+      <div class="px-4 py-6 text-center text-sm text-slate-500">No Pass vendors to shortlist yet.</div>
       {% endif %}
-
-      {% if uncovered_lines %}
-      <div class="border-t border-rose-200 bg-rose-50/40 px-4 py-3">
-        <div class="font-medium text-rose-950 text-sm">Uncovered lines ({{ uncovered_lines|length }})</div>
-        <ul class="mt-1 text-xs space-y-1">
-          {% for u in uncovered_lines %}
-          <li class="flex gap-3"><span class="text-slate-500 tabular-nums w-8">L{{ u.line_no }}</span><span class="text-slate-800">{{ u.description or '—' }}</span><span class="text-slate-500">{{ u.reason }}</span></li>
-          {% endfor %}
-        </ul>
+      {% if shortlist and not shortlist.enough %}
+      <div class="border-t border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-950" data-testid="award-shortlist-warning">
+        Fewer than 2 Pass vendors — only eligible vendors can be assigned below.
       </div>
       {% endif %}
       {% else %}
-      <div class="px-4 py-8 text-center text-sm text-slate-500">Extract vendor responses before an award recommendation is available.</div>
+      <div class="px-4 py-8 text-center text-sm text-slate-500">Extract vendor responses before a shortlist is available.</div>
       {% endif %}
     </div>
+  </section>
 
-    {% if split and split.rows %}
-    <details class="mt-3 text-xs text-slate-600">
-      <summary class="cursor-pointer hover:text-slate-900">All lines table (auditor)</summary>
-      <div class="mt-2 overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table class="w-full text-xs">
-          <thead class="bg-slate-50 text-slate-600"><tr><th class="px-2 py-1.5 text-left">#</th><th class="px-2 py-1.5 text-left">Line</th><th class="px-2 py-1.5 text-left">Award to</th><th class="px-2 py-1.5 text-right">₹/pc</th><th class="px-2 py-1.5 text-right">Extended</th><th class="px-2 py-1.5 text-left">Why</th></tr></thead>
+  {# ========== 3. Assign by line ========== #}
+  <section aria-labelledby="award-assign" id="assign-by-line" data-testid="award-assign">
+    <h2 id="award-assign" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Assign by line</h2>
+    <p class="text-sm text-slate-600 mb-2">Each line defaults to the cheaper shortlisted Pass vendor. Change among eligible Pass vendors only — Fail / unextracted cannot be selected.</p>
+    {% if live and live.available and assignment_rows %}
+    <form method="post" action="/rfx/{{ state.id }}/award/save-draft" class="rounded-lg border border-slate-200 bg-white overflow-hidden" data-testid="award-assign-form" id="award-draft-form">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600 text-xs">
+            <tr>
+              <th class="px-3 py-2 text-left w-12">#</th>
+              <th class="px-3 py-2 text-left">Line</th>
+              <th class="px-3 py-2 text-left">Award to</th>
+              <th class="px-3 py-2 text-right">₹/pc</th>
+              <th class="px-3 py-2 text-right">Extended</th>
+            </tr>
+          </thead>
           <tbody class="divide-y divide-slate-100">
-            {% for r in split.rows %}
-            <tr class="{% if not r.winner %}bg-rose-50{% endif %}">
-              <td class="px-2 py-1 text-slate-500">{{ r.line_no }}</td>
-              <td class="px-2 py-1 truncate max-w-[240px]">{{ r.description }}</td>
-              <td class="px-2 py-1">{{ r.winner or 'no usable quote' }}</td>
-              <td class="px-2 py-1 text-right tabular-nums">{% if r.unit_inr is not none %}{{ '%.2f'|format(r.unit_inr) }}{% endif %}</td>
-              <td class="px-2 py-1 text-right tabular-nums">{{ r.extended_inr|inr if r.extended_inr is not none else '' }}</td>
-              <td class="px-2 py-1 text-slate-600 max-w-[280px]">{{ r.why_reason or '—' }}</td>
+            {% for r in assignment_rows %}
+            <tr class="{% if r.uncovered %}bg-rose-50{% endif %}" data-testid="award-line-{{ r.line_no }}">
+              <td class="px-3 py-1.5 text-slate-500 tabular-nums">{{ r.line_no }}</td>
+              <td class="px-3 py-1.5 truncate max-w-[240px]" title="{{ r.description }}">{{ r.description }}</td>
+              <td class="px-3 py-1.5">
+                {% if r.options %}
+                <select name="line_{{ r.line_no }}"
+                  class="w-full max-w-xs rounded border border-slate-300 px-2 py-1 text-sm"
+                  data-testid="award-vendor-picker-{{ r.line_no }}">
+                  {% for o in r.options %}
+                  <option value="{{ o.vendor_id }}" {% if o.vendor_id == r.selected_vendor_id %}selected{% endif %}>
+                    {{ o.name }}{% if o.shortlisted %} ★{% endif %} · ₹{{ '%.2f'|format(o.unit_inr) }}
+                  </option>
+                  {% endfor %}
+                </select>
+                {% else %}
+                <span class="text-xs text-rose-700">No eligible Pass quote</span>
+                {% endif %}
+              </td>
+              <td class="px-3 py-1.5 text-right tabular-nums">{% if r.selected_unit_inr is not none %}{{ '%.2f'|format(r.selected_unit_inr) }}{% endif %}</td>
+              <td class="px-3 py-1.5 text-right tabular-nums">{{ r.extended_inr|inr if r.extended_inr is not none else '' }}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </details>
+      <div class="px-4 py-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+        <div class="text-sm text-slate-700">
+          Draft total <strong class="tabular-nums">{{ draft_totals.total_extended_inr|inr }}</strong>
+          · {{ draft_totals.covered_line_count }} lines
+          {% if draft_totals.uncovered_lines %} · {{ draft_totals.uncovered_lines|length }} uncovered{% endif %}
+        </div>
+        <button type="submit" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50" data-testid="award-save-draft-btn">Save assignments</button>
+      </div>
+
+      {# ========== 4. Rule checkmarks ========== #}
+      <div class="px-4 py-4 border-t border-slate-200 space-y-3" data-testid="award-checklist" id="rule-checks">
+        <div class="font-medium text-slate-900">Rule checks <span class="text-xs font-normal text-slate-500">(required before Send)</span></div>
+        {% for item in checklist_items %}
+        <label class="flex items-start gap-2 text-sm text-slate-800">
+          <input type="checkbox" name="check_{{ item.id }}" value="true"
+            class="mt-0.5 award-check"
+            data-testid="award-check-{{ item.id }}"
+            {% if draft and draft.checklist and draft.checklist[item.id] %}checked{% endif %}
+            onchange="window.__awardUpdateSend && window.__awardUpdateSend()">
+          <span>{{ item.label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+
+      {# ========== 5. Send ========== #}
+      <div class="px-4 py-4 border-t border-slate-200 flex flex-wrap items-center gap-3" id="send-award">
+        <button type="submit" formaction="/rfx/{{ state.id }}/award/send-notices" formmethod="post"
+          class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          data-testid="award-send-btn"
+          id="award-send-btn"
+          {% if not draft or not checklist_ready %}disabled{% endif %}>
+          Send award drafts
+        </button>
+        <span class="text-xs text-slate-500">Sends award drafts to winners (their lines only) and regret notices to others. No real SMTP.</span>
+        <a href="/rfx/{{ state.id }}/export.xlsx" class="ml-auto text-sm underline text-slate-700 hover:text-slate-900" data-testid="award-export-link">Export Excel</a>
+      </div>
+    </form>
+    <script>
+    (function(){
+      function allChecked(){
+        var boxes = document.querySelectorAll('.award-check');
+        if (!boxes.length) return false;
+        for (var i=0;i<boxes.length;i++){ if (!boxes[i].checked) return false; }
+        return true;
+      }
+      window.__awardUpdateSend = function(){
+        var btn = document.getElementById('award-send-btn');
+        if (btn) btn.disabled = !allChecked();
+      };
+      window.__awardUpdateSend();
+    })();
+    </script>
+    {% elif live and live.available %}
+    <div class="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">No lines to assign.</div>
+    {% else %}
+    <div class="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">Extract vendor responses before assigning lines.</div>
     {% endif %}
   </section>
 
-  {# ========== C. Lock & send ========== #}
-  <section aria-labelledby="award-lock-send" id="lock-send">
-    <h2 id="award-lock-send" class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Lock &amp; send</h2>
-    <p class="text-sm text-slate-600 mb-2">Finalize from a suggestion above (<strong>Use this recommendation</strong> or <strong>Use &amp; lock award</strong>), or lock manually below.</p>
-    <div class="rounded-lg border border-slate-200 bg-white overflow-hidden">
-      <div class="px-4 py-4 border-b border-slate-100 space-y-3" data-testid="award-manual-lock">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="font-medium text-slate-900 inline-flex items-center gap-1.5">
-            1. Manual lock / freeze
-            {{ tip("Locks strategy, line awards, totals and notices to the current calculation snapshot. Lock only succeeds for a complete freeze. If incomplete, use Freeze partial… with explicit acknowledgements and a written reason — never auto-invented.", aria="Lock help", width="w-64") }}
-          </div>
-          {% if invalid_hist %}
-          <span class="rounded bg-rose-50 text-rose-900 border border-rose-300 px-2 py-1 text-xs" data-testid="freeze-invalid-banner">Freeze requires review</span>
-          {% elif frozen and freeze_pack.freeze_mode == 'partial' %}
-          <span class="rounded bg-amber-50 text-amber-950 border border-amber-300 px-2 py-1 text-xs font-medium" data-testid="freeze-partial-banner">FROZEN PARTIAL · uncovered {{ freeze_pack.uncovered_lines|join(', ') if freeze_pack.uncovered_lines else '—' }} · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
-          {% elif frozen %}
-          <span class="rounded bg-emerald-50 text-emerald-900 border border-emerald-200 px-2 py-1 text-xs" data-testid="freeze-complete-banner">Frozen complete · {{ freeze_pack.calculation_snapshot_id }} · v{{ freeze_pack.vendor_data_version }}</span>
-          {% else %}
-          <span class="rounded bg-slate-50 text-slate-700 border border-slate-200 px-2 py-1 text-xs">Not locked yet</span>
-          {% endif %}
-        </div>
-
-        {% if invalid_hist %}
-        <div class="rounded-lg border border-rose-300 bg-rose-50 px-3 py-3 text-sm text-rose-950 space-y-2" data-testid="invalid-historical-freeze-block" id="replacement-rec">
-          <div class="font-semibold">Invalid historical complete freeze · Requires review</div>
-          <p class="text-xs leading-relaxed">
-            This pack was labeled complete but still has uncovered lines.
-            {% if freeze_pack.covered_line_count is not none and (freeze_pack.processing_completeness.line_count if freeze_pack.processing_completeness is mapping else none) %}
-            {{ freeze_pack.covered_line_count }}/{{ freeze_pack.processing_completeness.line_count }} lines are preserved for audit.
-            {% elif freeze_pack.covered_line_count is not none %}
-            {{ freeze_pack.covered_line_count }} covered lines are preserved for audit.
-            {% else %}
-            Covered lines are preserved for audit.
-            {% endif %}
-            Notices and final freeze exports stay disabled until you create a new valid freeze.
-          </p>
-          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
-            <div><dt class="text-rose-800/80 inline">Original id</dt> <dd class="inline">{{ freeze_pack.id }}</dd></div>
-            <div><dt class="text-rose-800/80 inline">Original mode</dt> <dd class="inline">{{ freeze_pack.freeze_mode or 'complete' }}</dd></div>
-            <div><dt class="text-rose-800/80 inline">Covered / requested</dt> <dd class="inline">{{ freeze_pack.covered_line_count or '—' }}{% if freeze_pack.processing_completeness and freeze_pack.processing_completeness.line_count %}/{{ freeze_pack.processing_completeness.line_count }}{% endif %}</dd></div>
-            <div><dt class="text-rose-800/80 inline">Uncovered IDs</dt> <dd class="inline">{{ freeze_pack.uncovered_lines|join(', ') if freeze_pack.uncovered_lines else '—' }}</dd></div>
-            <div><dt class="text-rose-800/80 inline">Frozen at</dt> <dd class="inline">{{ freeze_pack.frozen_at or '—' }}</dd></div>
-            <div><dt class="text-rose-800/80 inline">Repair status</dt> <dd class="inline">{{ freeze_pack.status }} · {{ freeze_pack.integrity or '—' }}</dd></div>
-          </dl>
-          <p class="text-xs"><a href="/rfx/{{ state.id }}/ai-log" class="underline font-medium">View AI / audit log</a></p>
-          <form method="post" action="/rfx/{{ state.id }}/award/replacement-recommendation" class="space-y-2 pt-1" data-testid="replacement-rec-form">
-            <label class="block text-xs font-medium">Replacement rationale <span class="text-rose-700">(required — saves recommendation, does not auto-freeze)</span>
-              <textarea name="rationale" rows="2" required minlength="8"
-                class="mt-1 w-full rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm text-slate-900"
-                placeholder="Explain the replacement recommendation while preserving the historical freeze for audit."
-                data-testid="replacement-rec-rationale"></textarea>
-            </label>
-            <button type="submit"
-              class="rounded-lg bg-rose-900 text-white px-4 py-2 text-sm font-medium hover:bg-rose-800"
-              data-testid="replacement-rec-btn">Create replacement recommendation</button>
-          </form>
-        </div>
-        <button type="button" disabled class="rounded-lg bg-slate-200 text-slate-400 px-5 py-2.5 text-sm font-medium cursor-not-allowed" data-testid="award-lock-btn" aria-disabled="true">Lock award</button>
-        {% elif not frozen %}
-        {% set cta = lock_cta if lock_cta is defined else none %}
-        {% if cta and not cta.show_enabled_lock %}
-        <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950 space-y-2" data-testid="award-contextual-lock-cta" data-cta-key="{{ cta.cta_key }}">
-          <p class="text-xs">{{ cta.cta_detail }}</p>
-          {% if cta.cta_key == 'unsaved_recommendation' %}
-          <form method="post" action="/rfx/{{ state.id }}/award/save-recommendation" class="space-y-2">
-            <label class="block text-xs font-medium">Rationale
-              <input type="text" name="rationale" required value="{{ lock_rationale_prefill or '' }}"
-                class="mt-1 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm"
-                data-testid="award-lock-rationale">
-            </label>
-            <button type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium" data-testid="award-contextual-cta-btn">{{ cta.cta_label }}</button>
-          </form>
-          {% elif cta.cta_href %}
-          <a href="{{ cta.cta_href }}" class="inline-flex rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800" data-testid="award-contextual-cta-btn">{{ cta.cta_label }}</a>
-          {% endif %}
-          <p class="text-[11px] text-amber-900/80">Generic <strong>Lock award</strong> stays disabled until this is resolved.</p>
-        </div>
-        {# Disabled lock control for tests / a11y — never enabled in invalid states #}
-        <button type="button" disabled
-          class="rounded-lg bg-slate-200 text-slate-400 px-5 py-2.5 text-sm font-medium cursor-not-allowed"
-          data-testid="award-lock-btn"
-          aria-disabled="true">Lock award</button>
-        {% else %}
-        <form method="post" action="/rfx/{{ state.id }}/award/lock" class="space-y-3" data-testid="award-lock-form">
-          {% if not rec or rec.status != 'current' %}
-          <label class="block text-xs font-medium text-slate-800">Reason <span class="text-rose-700">(required — saved as recommendation)</span>
-            <input type="text" name="rationale" required
-              value="{{ lock_rationale_prefill or '' }}"
-              class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-400"
-              data-testid="award-lock-rationale">
-          </label>
-          {% endif %}
-          <button type="submit"
-            class="rounded-lg bg-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:bg-slate-800"
-            data-testid="award-lock-btn"
-            {% if not live or not live.available or (cta and not cta.show_enabled_lock) %}disabled{% endif %}>Lock award</button>
-          <p class="text-xs text-slate-500">One click: save rationale if needed, then complete freeze only. If incomplete, use Freeze partial… below with real acknowledgements + reason.</p>
-        </form>
-        {% endif %}
-
-        <details class="text-xs text-slate-600" data-testid="award-freeze-details"{% if cta and cta.open_partial %} open{% endif %}>
-          <summary class="cursor-pointer hover:text-slate-900 font-medium text-slate-800">Freeze complete vs Freeze partial…</summary>
-          <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="mt-2 rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
-            <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
-            <p class="text-[11px] text-slate-600">Requires a current saved recommendation. Complete needs full coverage; partial needs acknowledgements + reason.</p>
-            {% if freeze_check_complete and not freeze_check_complete.ok %}
-            <div class="text-[11px] text-rose-800 rounded border border-rose-200 bg-rose-50 px-2 py-1.5">
-              Complete freeze blocked:
-              <ul class="list-disc pl-4 mt-0.5">{% for e in freeze_check_complete.errors %}<li>{% if e is mapping %}{{ e.message }}{% else %}{{ e }}{% endif %}</li>{% endfor %}</ul>
-            </div>
-            {% endif %}
-            <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">
-              <input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)
-            </label>
-            <div class="border-t border-slate-200 pt-2 space-y-1">
-              <div class="text-[11px] font-medium text-slate-700">Partial freeze acknowledgements</div>
-              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="coverage_gaps"> Acknowledge coverage gaps</label>
-              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="selected_blockers"> Acknowledge selected-award blockers</label>
-              <label class="block text-[11px]">Partial reason
-                <textarea name="partial_reason" rows="2" class="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs" placeholder="Required for partial freeze"></textarea>
-              </label>
-            </div>
-            <div class="flex flex-wrap gap-2 pt-1">
-              <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
-                data-testid="award-freeze-complete-btn"
-                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
-                onclick="document.getElementById('freeze-mode').value='complete'">Freeze complete</button>
-              <button type="submit" class="rounded-lg border border-amber-600 text-amber-950 bg-amber-50 px-3 py-1.5 text-xs font-medium hover:bg-amber-100"
-                data-testid="award-freeze-partial-btn"
-                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
-                onclick="document.getElementById('freeze-mode').value='partial'">Freeze partial…</button>
-            </div>
-          </form>
-        </details>
-        {% endif %}
-      </div>
-
-      <div class="px-4 py-4 space-y-3">
-        <div class="font-medium text-slate-900">2. Send award &amp; regret emails</div>
-        <p class="text-xs text-slate-500">Stubs award emails to winners and regret emails to others into Outbox. No real SMTP.</p>
-        {% if frozen and not invalid_hist %}
-        <form method="post" action="/rfx/{{ state.id }}/award/send-notices" class="inline">
-          <button type="submit"
-            class="rounded-lg border border-emerald-600 text-emerald-900 bg-emerald-50 px-4 py-2 text-sm font-medium hover:bg-emerald-100"
-            data-testid="award-send-btn">Send award &amp; regret emails</button>
-        </form>
-        <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 pt-2">
-          <a href="/rfx/{{ state.id }}/award/freeze.zip" class="underline hover:text-slate-900">Download freeze pack (.zip)</a>
-          <form method="post" action="/rfx/{{ state.id }}/award/export-notify" class="inline">
-            <button type="submit" class="underline hover:text-slate-900">Award workbook (.xlsx)</button>
-          </form>
-          <a href="/rfx/{{ state.id }}/memo.md" class="underline hover:text-slate-900">Memo (.md)</a>
-          <a href="/rfx/{{ state.id }}/audit.csv" class="underline hover:text-slate-900">Audit trail (.csv)</a>
-        </div>
-        {% else %}
-        <button type="button" disabled
-          class="rounded-lg border border-slate-200 bg-slate-100 text-slate-400 px-4 py-2 text-sm font-medium cursor-not-allowed"
-          data-testid="award-send-btn">Send award &amp; regret emails</button>
-        <span class="text-xs text-slate-500 ml-2">{% if invalid_hist %}Notices disabled — freeze requires review{% else %}Lock first{% endif %}</span>
-        {% endif %}
-      </div>
-    </div>
-    {% include "partials/audit_trust_strip.html" %}
-  </section>
+  {% include "partials/audit_trust_strip.html" %}
 </div>
 {% endblock %}

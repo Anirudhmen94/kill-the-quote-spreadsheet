@@ -102,8 +102,8 @@ def test_award_premade_still_cached_free_ask_live_path_exists():
             data={"prompt_id": "best_split"},
         )
     assert r.status_code == 200
-    assert 'data-testid="award-ask-use-rec"' in r.text
-    assert 'data-testid="award-ask-use-and-lock"' in r.text
+    assert "Apply" in r.text
+    assert 'data-testid="award-ask-use-and-lock"' not in r.text
 
     page = client.get(f"/rfx/{st['id']}/award")
     assert "Premade (fast)" in page.text
@@ -111,8 +111,8 @@ def test_award_premade_still_cached_free_ask_live_path_exists():
     assert 'hx-post="/rfx/' in page.text and "/award/ask\"" in page.text.replace("'", '"')
 
 
-def test_use_and_lock_saves_then_refuses_incomplete():
-    """Use & lock saves the recommendation but does not invent a partial freeze."""
+def test_use_and_lock_deprecated_redirects():
+    """Use & lock removed — redirects with Apply + Send guidance; no freeze."""
     st = _seed()
     _clear_recs(st)
     rid = st["id"]
@@ -120,7 +120,6 @@ def test_use_and_lock_saves_then_refuses_incomplete():
     assert r0.status_code == 200
     st1 = storage.load_state(rid)
     idx = len(st1["chat"]) - 1
-    assert scenario.recommendation_lifecycle(st1).get("can_freeze") is False
 
     r = client.post(f"/rfx/{rid}/award/use-and-lock/{idx}", follow_redirects=False)
     assert r.status_code in (200, 302, 303)
@@ -129,14 +128,10 @@ def test_use_and_lock_saves_then_refuses_incomplete():
         assert "/award" in loc
 
     st2 = storage.load_state(rid)
-    rec = st2.get("recommendation")
-    assert rec, "recommendation should be saved before lock attempt"
-    assert rec.get("status") in ("current", "saved")
     pack = st2.get("freeze") or {}
     assert pack.get("status") != "frozen"
     flash = st2.get("flash") or {}
     assert flash.get("level") == "error"
-    assert "partial" in (flash.get("message") or "").lower() or "complete" in (flash.get("message") or "").lower()
 
 
 def test_recommendation_from_award_returns_award():
@@ -158,19 +153,16 @@ def test_recommendation_from_award_returns_award():
     assert st2.get("recommendation", {}).get("status") == "current"
 
 
-def test_manual_lock_still_works():
+def test_award_page_has_send_not_manual_lock():
     st = _seed()
     rid = st["id"]
     page = client.get(f"/rfx/{rid}/award")
     assert page.status_code == 200
-    assert "Manual lock / freeze" in page.text
-    assert 'data-testid="award-manual-lock"' in page.text
-    assert 'data-testid="award-freeze-details"' in page.text
-    assert "Freeze complete" in page.text
-    assert "Freeze partial" in page.text
-    assert "finalize from a suggestion" in page.text.lower() or "Finalize from a suggestion" in page.text
+    assert "Send award drafts" in page.text
+    assert 'data-testid="award-send-btn"' in page.text
+    assert "Manual lock / freeze" not in page.text
+    assert "Freeze complete" not in page.text
 
-    # Lock award refuses incomplete — explicit Freeze partial still works (covered below)
     r = client.post(f"/rfx/{rid}/award/lock", data={}, follow_redirects=False)
     assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)

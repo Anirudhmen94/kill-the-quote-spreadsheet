@@ -1,4 +1,4 @@
-"""Simpler Award redesign: Ask card, Who wins, Lock & send."""
+"""Award redesign: Ask card, top-2, assign, checks, send (no freeze/lock UX)."""
 from __future__ import annotations
 
 import sys
@@ -73,37 +73,33 @@ def test_vendor_award_packs_group_by_winner():
     assert any(u["line_no"] == 30 for u in uncovered)
 
 
-def test_award_page_simpler_layout_ask_lock_send():
+def test_award_page_ask_top2_assign_send():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
     html = r.text
 
-    assert "Ask before you lock" in html
+    assert "Ask the analyst" in html
     assert 'data-testid="award-ask-card"' in html
     assert 'data-testid="award-ask-premade-best_split"' in html
     assert 'data-testid="award-ask-premade-who_to_drop"' in html
     assert 'data-testid="award-ask-premade-biggest_risks"' in html
     assert 'data-testid="award-ask-textarea"' in html
 
-    assert "Who wins" in html
+    assert "Suggest top 2" in html
     assert "Kraftline Industries" in html
-    assert "Lowest usable INR/pc among Pass vendors" in html
-    assert "Uncovered lines" in html
-
-    assert "Lock award" in html
-    assert 'data-testid="award-lock-btn"' in html
-    assert "Send award" in html
+    assert "Sri Balaji Packaging" in html
+    assert "Assign by line" in html
+    assert "Send award drafts" in html
     assert 'data-testid="award-send-btn"' in html
 
+    assert "Lock award" not in html
     assert "Ready to freeze?" not in html
-    assert "Manual lock / freeze" in html
-    assert "Freeze complete" in html
+    assert "Manual lock / freeze" not in html
+    assert "Freeze complete" not in html
     assert "Preview notices" not in html
     assert "Step 1 · Recommendation" not in html
     assert 'id="award-filters"' not in html
-    assert "Data quality" not in html
-    assert ">Blockers" not in html and "Blockers (" not in html
 
 
 def test_notice_preview_lists_winner_lines():

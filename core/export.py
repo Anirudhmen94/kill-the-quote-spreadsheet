@@ -129,20 +129,87 @@ def award_workbook(state: dict, provisional: bool = False) -> bytes:
         ws.cell(row=i, column=1, value=c)
     ws.column_dimensions["A"].width = 110
 
-    cp = engine.cheapest_per_line(cmp, None, False, False)
-    _sheet_from_rows(
-        wb,
-        "Award by line",
-        ["Line", "SKU", "Description", "Annual qty", "Awarded to", "Unit INR", "Extended INR", "Runner-up", "Runner-up unit INR", "Gap %"],
-        [[r["line_no"], ln["sku"], r["description"], r["annual_qty"], r["winner"], r["unit_inr"], r["extended_inr"], r["runner_up"], r["runner_up_unit_inr"], r.get("gap_pct")] for r, ln in zip(cp["rows"], cmp["lines"])],
-        {"Description": 50, "Awarded to": 28, "Runner-up": 28},
-    )
-    ws2 = wb["Award by line"]
-    ws2.cell(row=len(cp["rows"]) + 3, column=6, value="Total")
-    ws2.cell(row=len(cp["rows"]) + 3, column=7, value=cp["total_extended_inr"]).font = Font(bold=True)
-    ws2.cell(row=len(cp["rows"]) + 5, column=1, value=f"Snapshot {snap['id']} · vendor data version {meta['vendor_data_version']} · {meta['export_status']}")
-    if cp["uncovered_lines"]:
-        ws2.cell(row=len(cp["rows"]) + 4, column=1, value=f"Lines without a usable quote: {cp['uncovered_lines']}")
+    from . import award_draft as _ad
+
+    draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
+    draft_rows = None
+    if draft and draft.get("allocation"):
+        try:
+            draft_rows = _ad.line_assignment_rows(state)
+            totals = _ad.draft_totals(state)
+        except Exception:
+            draft_rows = None
+            totals = None
+    if draft_rows is not None:
+        line_by_no = {ln["line_no"]: ln for ln in cmp["lines"]}
+        award_rows = []
+        for r in draft_rows:
+            ln = line_by_no.get(r["line_no"]) or {}
+            award_rows.append(
+                [
+                    r["line_no"],
+                    ln.get("sku"),
+                    r.get("description"),
+                    r.get("annual_qty"),
+                    r.get("selected_vendor_name") or "—",
+                    r.get("selected_unit_inr"),
+                    r.get("extended_inr"),
+                    "",
+                    "",
+                    "",
+                ]
+            )
+        _sheet_from_rows(
+            wb,
+            "Award by line",
+            ["Line", "SKU", "Description", "Annual qty", "Awarded to", "Unit INR", "Extended INR", "Runner-up", "Runner-up unit INR", "Gap %"],
+            award_rows,
+            {"Description": 50, "Awarded to": 28, "Runner-up": 28},
+        )
+        ws2 = wb["Award by line"]
+        total_ext = (totals or {}).get("total_extended_inr") or 0
+        ws2.cell(row=len(award_rows) + 3, column=6, value="Total")
+        ws2.cell(row=len(award_rows) + 3, column=7, value=total_ext).font = Font(bold=True)
+        ws2.cell(row=len(award_rows) + 5, column=1, value=f"Snapshot {snap['id']} · vendor data version {meta['vendor_data_version']} · {meta['export_status']} · award draft")
+        uncovered = (totals or {}).get("uncovered_lines") or []
+        if uncovered:
+            ws2.cell(row=len(award_rows) + 4, column=1, value=f"Lines without an eligible Pass quote: {uncovered}")
+        # Regret / non-awarded summary
+        winner_ids = {r.get("selected_vendor_id") for r in draft_rows if r.get("selected_vendor_id")}
+        regret_rows = []
+        for v in cmp["vendors"]:
+            if v["vendor_id"] in winner_ids:
+                continue
+            regret_rows.append(
+                [
+                    v["name"],
+                    v.get("gate") or "",
+                    "regret / not awarded",
+                    v.get("usable"),
+                ]
+            )
+        _sheet_from_rows(
+            wb,
+            "Non-awarded",
+            ["Vendor", "Gate", "Status", "Usable lines"],
+            regret_rows,
+            {"Vendor": 28, "Status": 24},
+        )
+    else:
+        cp = engine.cheapest_per_line(cmp, None, False, False)
+        _sheet_from_rows(
+            wb,
+            "Award by line",
+            ["Line", "SKU", "Description", "Annual qty", "Awarded to", "Unit INR", "Extended INR", "Runner-up", "Runner-up unit INR", "Gap %"],
+            [[r["line_no"], ln["sku"], r["description"], r["annual_qty"], r["winner"], r["unit_inr"], r["extended_inr"], r["runner_up"], r["runner_up_unit_inr"], r.get("gap_pct")] for r, ln in zip(cp["rows"], cmp["lines"])],
+            {"Description": 50, "Awarded to": 28, "Runner-up": 28},
+        )
+        ws2 = wb["Award by line"]
+        ws2.cell(row=len(cp["rows"]) + 3, column=6, value="Total")
+        ws2.cell(row=len(cp["rows"]) + 3, column=7, value=cp["total_extended_inr"]).font = Font(bold=True)
+        ws2.cell(row=len(cp["rows"]) + 5, column=1, value=f"Snapshot {snap['id']} · vendor data version {meta['vendor_data_version']} · {meta['export_status']}")
+        if cp["uncovered_lines"]:
+            ws2.cell(row=len(cp["rows"]) + 4, column=1, value=f"Lines without a usable quote: {cp['uncovered_lines']}")
 
     cols = ["Line", "SKU", "Description", "Board", "Annual qty"] + [v["name"] for v in cmp["vendors"]]
     ws3 = _sheet_from_rows(wb, "Comparison", cols, [], {"Description": 50})

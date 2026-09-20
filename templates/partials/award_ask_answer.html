@@ -53,16 +53,33 @@
     </span>
     {% if m.status != 'stale' and not m.legacy and m.status != 'failed' %}
     <div class="ml-auto flex flex-wrap items-center gap-2">
-      <form hx-post="/rfx/{{ state.id }}/recommendation/{{ idx }}">
-        <input type="hidden" name="return_to" value="award">
-        <button type="submit" class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
-          data-testid="award-ask-use-rec">Use this recommendation</button>
+      {% if m.apply_all_split %}
+      <form method="post" action="/rfx/{{ state.id }}/award/apply-split"
+        hx-post="/rfx/{{ state.id }}/award/apply-split"
+        hx-target="body"
+        hx-swap="none">
+        <input type="hidden" name="chat_idx" value="{{ idx }}">
+        <button type="submit"
+          class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
+          data-testid="award-ask-apply-split">{{ m.apply_all_split.label or 'Apply suggested split' }}</button>
       </form>
-      <form hx-post="/rfx/{{ state.id }}/award/use-and-lock/{{ idx }}">
-        <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
-          data-testid="award-ask-use-and-lock"
-          title="Save this suggestion as the current recommendation, then lock the award.">Use &amp; lock award</button>
+      {% endif %}
+      {% for action in m.apply_actions or [] %}
+      <form method="post" action="/rfx/{{ state.id }}/award/apply-vendor"
+        hx-post="/rfx/{{ state.id }}/award/apply-vendor"
+        hx-target="body"
+        hx-swap="none">
+        <input type="hidden" name="vendor_id" value="{{ action.vendor_id }}">
+        <input type="hidden" name="line_nos" value="{{ action.line_nos|join(',') }}">
+        <button type="submit"
+          class="rounded-lg border border-emerald-600 bg-emerald-50 text-emerald-950 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100"
+          data-testid="award-ask-apply-vendor"
+          title="Sets this vendor on the draft assignment — does not send.">{{ action.label or ('Apply ' ~ action.vendor_name) }}</button>
       </form>
+      {% endfor %}
+      {% if not m.apply_actions and not m.apply_all_split %}
+      <span class="text-[11px] text-slate-400">Ask about a vendor or line to enable Apply.</span>
+      {% endif %}
     </div>
     {% endif %}
   </div>

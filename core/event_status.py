@@ -27,11 +27,13 @@ STATUS_RESPONSES = "responses_received"
 STATUS_EXTRACTED = "extracted"
 STATUS_COMPARED = "compared"
 STATUS_AWARDED = "awarded"
+STATUS_AWARD_DRAFTS_SENT = "award_drafts_sent"
 
 LABELS: dict[str, str] = {
     STATUS_FREEZE_REQUIRES_REVIEW: "Freeze requires review",
     STATUS_COMPLETE_FROZEN: "Award frozen · complete",
     STATUS_PARTIAL_FROZEN: "Award frozen · partial",
+    STATUS_AWARD_DRAFTS_SENT: "Award drafts sent",
     STATUS_RECOMMENDATION_STALE: "Recommendation stale",
     STATUS_RECOMMENDATION_SAVED: "Recommendation saved",
     STATUS_PROCESSING_REQUIRES_ACTION: "Processing requires action",
@@ -148,6 +150,17 @@ def derive_event_display_status(state: dict) -> dict[str, Any]:
             return _result(STATUS_PARTIAL_FROZEN, pack=pack, validity=VALIDITY_VALID)
         return _result(STATUS_COMPLETE_FROZEN, pack=pack, validity=VALIDITY_VALID)
 
+    draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
+    if draft and draft.get("sent"):
+        conf = draft.get("send_confirmation") or {}
+        detail = None
+        if conf.get("award_vendors") or conf.get("regret_vendors"):
+            detail = (
+                f"Award drafts: {', '.join(conf.get('award_vendors') or []) or '—'}; "
+                f"regrets: {', '.join(conf.get('regret_vendors') or []) or '—'}"
+            )
+        return _result(STATUS_AWARD_DRAFTS_SENT, detail=detail)
+
     life = scenario.recommendation_lifecycle(state)
     lifecycle = life.get("lifecycle") or ""
     if lifecycle == scenario.REC_STALE or lifecycle == "stale":
@@ -181,6 +194,7 @@ def derive_event_display_status(state: dict) -> dict[str, Any]:
         "recommended": STATUS_RECOMMENDATION_SAVED,
         "awarded": STATUS_AWARDED,
         "award_frozen": STATUS_COMPLETE_FROZEN,
+        "award_drafts_sent": STATUS_AWARD_DRAFTS_SENT,
     }
     key = key_map.get(raw, raw if raw in LABELS else STATUS_DRAFT)
     # Prefer "compared" when vendors extracted

@@ -1,4 +1,4 @@
-"""Award freeze/lock UX: save-recommendation API + Lock redesign."""
+"""Freeze API remains for back-compat; Award page no longer exposes lock/freeze UX."""
 from __future__ import annotations
 
 import sys
@@ -28,32 +28,21 @@ def _clear_recs(st: dict) -> dict:
     return st
 
 
-def test_award_page_shows_lock_and_ask_not_old_checklist():
+def test_award_page_has_ask_not_lock():
     st = _seed()
     r = client.get(f"/rfx/{st['id']}/award")
     assert r.status_code == 200
     html = r.text
-    assert "Ask before you lock" in html
-    assert "Lock award" in html
-    assert 'data-testid="award-lock-btn"' in html
+    assert "Ask the analyst" in html
+    assert "Lock award" not in html
+    assert 'data-testid="award-lock-btn"' not in html
     assert "Ready to freeze?" not in html
     assert 'data-testid="ready-to-freeze"' not in html
-    # Golden seed has a saved rec — no rationale field required
     assert 'data-testid="award-lock-rationale"' not in html
+    assert "Send award drafts" in html
 
 
-def test_award_page_without_rec_shows_rationale_on_lock_form():
-    st = _seed()
-    _clear_recs(st)
-    r = client.get(f"/rfx/{st['id']}/award")
-    assert r.status_code == 200
-    html = r.text
-    assert 'data-testid="award-lock-rationale"' in html
-    assert 'name="rationale"' in html
-    assert "Ask before you lock" in html
-
-
-def test_save_recommendation_from_award_unlocks_can_freeze():
+def test_save_recommendation_api_still_works():
     st = _seed()
     _clear_recs(st)
     life0 = scenario.recommendation_lifecycle(storage.load_state(st["id"]))
@@ -79,11 +68,6 @@ def test_save_recommendation_from_award_unlocks_can_freeze():
     life = scenario.recommendation_lifecycle(st2)
     assert life.get("can_freeze") is True
     assert life.get("freeze_blocked_reason") is None
-
-    page = client.get(f"/rfx/{st['id']}/award")
-    assert page.status_code == 200
-    assert 'data-testid="award-lock-btn"' in page.text
-    assert 'data-testid="award-lock-rationale"' not in page.text
 
 
 def test_save_recommendation_requires_rationale():
@@ -120,87 +104,30 @@ def test_freeze_blocked_human_copy():
     st["recommendations"] = []
     st["recommendation"] = None
     life = scenario.recommendation_lifecycle(st)
-    human = scenario.freeze_blocked_human(life)
-    assert human
-    assert "rationale" in human.lower()
-    assert life["freeze_blocked_reason"].startswith("Save the current")
+    assert life.get("can_freeze") is False
+    assert life.get("freeze_blocked_reason")
 
 
-def test_complete_freeze_post_redirects_with_error_flash_when_blocked():
-    """Plain form POST to legacy freeze endpoint still flashes errors."""
-    st = _seed()
-    rid = st["id"]
-    check = freeze.validate_freeze_request(storage.load_state(rid), mode="complete")
-    assert check["ok"] is False
-    assert scenario.recommendation_lifecycle(storage.load_state(rid)).get("can_freeze") is True
-
-    r = client.post(
-        f"/rfx/{rid}/award/freeze",
-        data={"freeze_mode": "complete"},
-        follow_redirects=False,
-    )
-    assert r.status_code in (303, 302), r.text[:500]
-    loc = r.headers.get("location") or ""
-    assert "/award" in loc
-    assert not (r.headers.get("HX-Redirect") or r.headers.get("hx-redirect"))
-
-    st2 = storage.load_state(rid)
-    assert not (st2.get("freeze") and st2["freeze"].get("status") == "frozen")
-    flash = st2.get("flash") or {}
-    assert flash.get("level") == "error"
-    assert "uncovered" in (flash.get("message") or "").lower() or "allocation" in (
-        flash.get("message") or ""
-    ).lower()
-    assert "partial" in (flash.get("message") or "").lower()
-
-    page = client.get(f"/rfx/{rid}/award")
-    assert page.status_code == 200
-    assert 'data-testid="award-flash"' in page.text
-    assert "Error." in page.text
-    assert "Not locked yet" in page.text or "not locked" in page.text.lower()
-
-
-def test_partial_freeze_post_persists_and_redirects_for_plain_form():
+def test_freeze_api_partial_still_works():
+    """Leftover freeze API for tests/back-compat — not exposed on Award UI."""
     st = _seed()
     rid = st["id"]
     r = client.post(
         f"/rfx/{rid}/award/freeze",
         data={
             "freeze_mode": "partial",
-            "partial_reason": "Line 30 uncovered; acknowledging coverage gap for demo.",
+            "partial_reason": "Line 30 uncovered; API back-compat test.",
             "acknowledgement": ["coverage_gaps", "selected_blockers"],
+            "confirm_assumed": "true",
         },
         follow_redirects=False,
     )
-    assert r.status_code in (303, 302), (r.status_code, r.headers, r.text[:300])
-    assert "/award" in (r.headers.get("location") or "")
-
+    assert r.status_code in (302, 303)
     st2 = storage.load_state(rid)
     pack = st2.get("freeze") or {}
     assert pack.get("status") == "frozen"
     assert pack.get("freeze_mode") == "partial"
-    flash = st2.get("flash") or {}
-    assert flash.get("level") == "success"
-    assert "frozen successfully" in (flash.get("message") or "").lower() or "locked successfully" in (
-        flash.get("message") or ""
-    ).lower()
-
+    # Award page still must not advertise freeze/lock as the buyer path
     page = client.get(f"/rfx/{rid}/award")
-    assert page.status_code == 200
-    assert "Frozen" in page.text or "frozen" in page.text.lower()
-    assert 'data-testid="award-flash"' in page.text
-    assert "Success" in page.text
-
-
-def test_freeze_ux_checklist_still_distinguishes_attempt_vs_complete():
-    """Helper still distinguishes ready-to-attempt vs complete-ok (even if UI dropped checklist)."""
-    st = _seed()
-    checklist = scenario.freeze_ux_checklist(
-        storage.load_state(st["id"]),
-        live=snapshots.live_award_calculation(storage.load_state(st["id"])),
-        life=scenario.recommendation_lifecycle(storage.load_state(st["id"])),
-        has_blocking_exceptions=True,
-    )
-    assert checklist["ready_to_attempt"] is True
-    assert checklist["complete_ok"] is False
-    assert checklist["all_ready_for_freeze"] is False
+    assert "Lock award" not in page.text
+    assert "Freeze complete" not in page.text

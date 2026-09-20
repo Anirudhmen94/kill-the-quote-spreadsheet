@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from . import engine, freeze
+from . import award_draft, engine, freeze
 
 DEFAULT_STAKEHOLDERS = [
     {"role": "Category lead", "email": "category.lead@buyer.example"},
@@ -20,6 +20,10 @@ def _vendor_by_name(state: dict) -> dict[str, dict]:
     return {v["name"]: v for v in state.get("vendors", [])}
 
 
+def _vendor_by_id(state: dict) -> dict[str, dict]:
+    return {v["vendor_id"]: v for v in state.get("vendors", [])}
+
+
 def push_flash(
     state: dict,
     message: str,
@@ -27,12 +31,15 @@ def push_flash(
     *,
     cta_href: str | None = None,
     cta_label: str | None = None,
+    confirmation: dict | None = None,
 ) -> None:
     state["flash"] = {"message": message, "level": level, "at": _now()}
     if cta_href:
         state["flash"]["cta_href"] = cta_href
     if cta_label:
         state["flash"]["cta_label"] = cta_label
+    if confirmation:
+        state["flash"]["confirmation"] = confirmation
 
 
 def pop_flash(state: dict) -> dict | None:
@@ -47,12 +54,111 @@ def _append_outbox(state: dict, entry: dict) -> None:
     state.setdefault("outbox", []).append(entry)
 
 
-def _pack_or_raise(state: dict) -> dict:
+def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
+    """Stub-send award + regret notices from the Award draft (primary buyer path).
+
+    Falls back to a valid freeze pack only when no draft allocation exists
+    (legacy / demo seeds). Does not require freeze for the normal Award UX.
+    """
+    draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
+    has_draft_alloc = bool(draft and draft.get("allocation"))
+
+    # Primary buyer path: Award draft with line assignments
+    if has_draft_alloc:
+        return _send_from_draft(state, vendor_id=vendor_id)
+    # Legacy / demo: valid freeze pack notices
+    return _send_from_freeze(state, vendor_id=vendor_id)
+
+
+def _send_from_draft(state: dict, vendor_id: str | None = None) -> dict:
+    check = award_draft.validate_for_send(state)
+    if not check["ok"]:
+        raise ValueError("; ".join(check["errors"]))
+
+    notices, regrets = award_draft.build_notices_from_draft(state)
+    by_id = _vendor_by_id(state)
+    sent: list[dict] = []
+    messages = list(notices) + list(regrets)
+    for msg in messages:
+        v = by_id.get(msg.get("vendor_id") or "") or _vendor_by_name(state).get(msg.get("vendor") or "")
+        if not v:
+            continue
+        if vendor_id and v["vendor_id"] != vendor_id:
+            continue
+        entry = {
+            "kind": msg.get("kind") or "award_notice",
+            "to": v.get("email") or f"{v['vendor_id']}@vendor.example",
+            "vendor_id": v["vendor_id"],
+            "vendor_name": v["name"],
+            "subject": msg.get("subject") or "Award update",
+            "body": msg.get("body") or "",
+            "sent_at": _now(),
+            "delivery": "stubbed (no SMTP)",
+            "line_nos": msg.get("line_nos") or [],
+            "source": "award_draft",
+            "snapshot_id": ((state.get("award_scenario") or {}).get("snapshot_id")),
+        }
+        _append_outbox(state, entry)
+        sent.append(entry)
+
+    totals = award_draft.draft_totals(state)
+    award_vendors = sorted(
+        {e["vendor_name"] for e in sent if e.get("kind") == "award_notice"}
+    )
+    regret_vendors = sorted(
+        {
+            e["vendor_name"]
+            for e in sent
+            if e.get("kind") in ("regret", "regret_notice")
+        }
+    )
+    confirmation = {
+        "award_count": len(award_vendors),
+        "regret_count": len(regret_vendors),
+        "award_vendors": award_vendors,
+        "regret_vendors": regret_vendors,
+        "total_extended_inr": totals.get("total_extended_inr"),
+        "covered_line_count": totals.get("covered_line_count"),
+    }
+    award_draft.mark_sent(state, confirmation)
+
+    stake_entries = notify_stakeholders(
+        state,
+        action="award_drafts_sent",
+        detail=(
+            f"Sent {len(award_vendors)} award draft(s) and {len(regret_vendors)} regret notice(s). "
+            f"Award: {', '.join(award_vendors) or '—'}. "
+            f"Regret: {', '.join(regret_vendors) or '—'}. "
+            f"Draft total: {engine.fmt_inr(totals.get('total_extended_inr'))}."
+        ),
+        pack=None,
+    )
+    flash = (
+        f"Award drafts sent to {len(award_vendors)} vendor(s); "
+        f"regret notices to {len(regret_vendors)}. "
+        f"View Outbox."
+    )
+    push_flash(
+        state,
+        flash,
+        cta_href=f"/rfx/{state['id']}/email#outbox",
+        cta_label="View Email Outbox",
+        confirmation=confirmation,
+    )
+    return {
+        "sent": sent,
+        "stakeholders": stake_entries,
+        "flash": flash,
+        "confirmation": confirmation,
+    }
+
+
+def _send_from_freeze(state: dict, vendor_id: str | None = None) -> dict:
+    """Legacy path: notices from a valid freeze pack (demo / back-compat)."""
     from . import event_status
 
     pack = event_status.active_valid_freeze(state)
     if not pack:
-        # Surface why if an invalid historical freeze is present
         latest = event_status.latest_relevant_freeze(state)
         if latest and event_status.freeze_validity(latest) in (
             event_status.VALIDITY_REQUIRES_REVIEW,
@@ -60,15 +166,12 @@ def _pack_or_raise(state: dict) -> dict:
         ):
             raise ValueError(
                 "Notices disabled — freeze requires review (invalid historical complete freeze). "
-                "Create a replacement recommendation first."
+                "Use the Award draft Send flow instead, or create a replacement recommendation."
             )
-        raise ValueError("Freeze an award first before sending notices.")
-    return pack
+        raise ValueError(
+            "Complete the Award checklist and assign lines before sending notices."
+        )
 
-
-def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
-    """Stub-send award notices / regrets to vendors; always notify stakeholders."""
-    pack = _pack_or_raise(state)
     by_name = _vendor_by_name(state)
     sent: list[dict] = []
     messages = list(pack.get("notices") or []) + list(pack.get("regrets") or [])
@@ -89,6 +192,7 @@ def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
             "delivery": "stubbed (no SMTP)",
             "freeze_id": pack.get("id"),
             "snapshot_id": pack.get("calculation_snapshot_id"),
+            "source": "freeze",
         }
         _append_outbox(state, entry)
         sent.append(entry)
@@ -106,6 +210,22 @@ def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
     )
     award_count = sum(1 for entry in sent if entry.get("kind") == "award_notice")
     regret_count = sum(1 for entry in sent if entry.get("kind") in ("regret", "regret_notice"))
+    award_vendors = sorted(
+        {e["vendor_name"] for e in sent if e.get("kind") == "award_notice"}
+    )
+    regret_vendors = sorted(
+        {
+            e["vendor_name"]
+            for e in sent
+            if e.get("kind") in ("regret", "regret_notice")
+        }
+    )
+    confirmation = {
+        "award_count": award_count,
+        "regret_count": regret_count,
+        "award_vendors": award_vendors,
+        "regret_vendors": regret_vendors,
+    }
     flash = (
         f"Successfully stub-sent {award_count} award notice(s) and {regret_count} regret notice(s) "
         f"to Outbox (no real SMTP). View Outbox."
@@ -115,8 +235,9 @@ def send_award_notices(state: dict, vendor_id: str | None = None) -> dict:
         flash,
         cta_href=f"/rfx/{state['id']}/email#outbox",
         cta_label="View Email Outbox",
+        confirmation=confirmation,
     )
-    return {"sent": sent, "stakeholders": stake_entries, "flash": flash}
+    return {"sent": sent, "stakeholders": stake_entries, "flash": flash, "confirmation": confirmation}
 
 
 def notify_stakeholders(
@@ -140,6 +261,13 @@ def notify_stakeholders(
                 else:
                     bits.append(str(n))
             vendors_summary = ", ".join(bits)
+    elif isinstance(state.get("award_draft"), dict):
+        totals = award_draft.draft_totals(state)
+        total = totals.get("total_extended_inr")
+        strategy = "award draft · quality-gated line assign"
+        share = totals.get("share_by_vendor") or {}
+        bits = [f"{n} ({s.get('lines')} lines)" for n, s in share.items()]
+        vendors_summary = ", ".join(bits)
     title = (state.get("rfx") or {}).get("title") or state["id"]
     entries: list[dict] = []
     for sh in stakeholders(state):
@@ -176,14 +304,17 @@ def notify_stakeholders(
 def record_export_notification(state: dict) -> dict:
     """Called when award workbook is exported — notify stakeholders + flash."""
     pack = freeze.current_freeze(state)
+    draft = state.get("award_draft") if isinstance(state.get("award_draft"), dict) else None
+    detail = (
+        f"Award workbook (.xlsx) downloaded for RFx {state['id']}. "
+        f"Freeze: {(pack or {}).get('id') or 'none'}; "
+        f"draft sent: {(draft or {}).get('sent')}; "
+        f"snapshot: {(pack or {}).get('calculation_snapshot_id') or 'live'}."
+    )
     stake = notify_stakeholders(
         state,
         action="award_workbook_exported",
-        detail=(
-            f"Award workbook (.xlsx) downloaded for RFx {state['id']}. "
-            f"Freeze: {(pack or {}).get('id') or 'none'}; "
-            f"snapshot: {(pack or {}).get('calculation_snapshot_id') or 'live'}."
-        ),
+        detail=detail,
         pack=pack,
     )
     flash = f"Award workbook exported. Notified {len(stake)} stakeholder(s) via Outbox."

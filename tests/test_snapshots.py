@@ -236,8 +236,9 @@ def test_processing_state():
     assert "still being extracted" in ds["text"] or "Provisional" in ds["text"]
 
     # Finish Kraftline
-    v2["status"] = "extracted"
+    from core import vendor_extraction
     v2["extraction"] = _vendor("v2", "Kraftline", [9.0] * 30)["extraction"]
+    vendor_extraction.set_extracted(v2, version=snapshots.current_version(state) + 1)
     snapshots.bump_vendor_data_version(state, "vendor_extracted", ["v2"])
     snapshots.refresh_staleness(state)
     assert state["chat"][0]["status"] == "stale"
