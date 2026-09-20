@@ -8,8 +8,7 @@
     <p class="mt-1 text-sm text-slate-600">All prices normalised to <strong>INR per piece</strong>. Click any cell to see where the number came from. FX {{ cmp.fx.rates_to_inr.USD }} INR/USD as of {{ cmp.fx.as_of }}.</p>
   </div>
   <div class="flex items-center gap-2">
-    <a href="/rfx/{{ state.id }}/export.csv" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">CSV</a>
-    <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Excel workbook</a>
+    <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Export workbook</a>
     <button type="button" onclick="openAnalyst()" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Ask the analyst</button>
   </div>
 </div>
