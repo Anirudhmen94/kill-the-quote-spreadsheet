@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core import analyst, demo_ops, llm, snapshots, storage
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
@@ -21,10 +21,9 @@ SUGGESTED = [
 
 @router.get("/rfx/{rfx_id}/ask", response_class=HTMLResponse)
 def ask_page(request: Request, rfx_id: str):
-    state = load_or_404(rfx_id)
-    ready = any(v.get("extraction") for v in state["vendors"])
-    prompts = demo_ops.DEMO_PROMPTS if demo_ops.is_demo_mode(state) else SUGGESTED
-    return render(request, "ask.html", state=state, active="ask", suggested=prompts, ready=ready, demo_script_mode=demo_ops.is_demo_mode(state))
+    """Ask lives inside Compare as a slide-over; keep /ask as a redirect."""
+    load_or_404(rfx_id)
+    return RedirectResponse(f"/rfx/{rfx_id}/compare#analyst", status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/ask", response_class=HTMLResponse)
@@ -101,4 +100,4 @@ def clear_chat(request: Request, rfx_id: str):
     state = load_or_404(rfx_id)
     state["chat"] = []
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/ask")
+    return hx_redirect(f"/rfx/{rfx_id}/compare#analyst")

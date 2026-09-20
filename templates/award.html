@@ -9,7 +9,7 @@
   </div>
   <div class="flex flex-wrap items-center gap-2">
     <a href="/rfx/{{ state.id }}/ai-log" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">AI call log ({{ state.ai_log|length }})</a>
-    <a href="/rfx/{{ state.id }}/outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
+    <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
     <a href="/rfx/{{ state.id }}/memo.md" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Memo (.md)</a>
     <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Export award workbook</a>
     {% if freeze_pack %}
@@ -105,7 +105,7 @@
     {% elif not rec %}
     <div class="rounded-lg border border-slate-200 bg-white">
       <div class="px-4 py-3 border-b border-slate-200 font-medium">Current calculation — recommendation not yet saved</div>
-      <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/ask" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
+      <div class="px-4 py-8 text-center text-sm text-slate-500">No recommendation saved yet. <a href="/rfx/{{ state.id }}/compare#analyst" class="underline">Ask the analyst</a> for a decision, then click “Save as award recommendation” under the answer.</div>
     </div>
     {% endif %}
 

@@ -1,0 +1,76 @@
+{# Ask-the-analyst UI for the Compare slide-over drawer.
+   Expects: state, suggested, ready, ai_ok #}
+<div class="flex flex-col h-full min-h-0">
+  <div class="shrink-0 border-b border-slate-200 px-5 py-3 flex items-start justify-between gap-3">
+    <div class="min-w-0">
+      <div class="text-xs text-slate-500">Analyst</div>
+      <h2 class="font-semibold">Ask the analyst</h2>
+      <p class="mt-0.5 text-xs text-slate-600">Plain-language questions over the comparison. Calculations run in code; tables appear under each answer.</p>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      {% if state.chat %}
+      <form hx-post="/rfx/{{ state.id }}/chat/clear" hx-confirm="Clear the conversation?">
+        <button type="submit" class="text-xs text-slate-500 hover:text-rose-600 px-2 py-1">Clear</button>
+      </form>
+      {% endif %}
+      <button type="button" onclick="window.closeAnalyst && closeAnalyst()" class="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label="Close analyst">
+        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  {% if not ready %}
+  <div class="flex-1 flex items-center justify-center p-8 text-center text-sm text-slate-500">
+    <div>
+      Read at least one vendor response first.
+      <a href="/rfx/{{ state.id }}/email#inbox" class="underline block mt-2">Go to Email</a>
+    </div>
+  </div>
+  {% else %}
+  <div class="shrink-0 px-5 py-3 border-b border-slate-100 bg-slate-50/80">
+    <div class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Questions worth asking</div>
+    <div class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+      {% for s in suggested %}
+      <button type="button"
+        onclick="const t=document.querySelector('#ask-form textarea'); if(t){t.value=this.textContent.trim(); t.focus();}"
+        class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-700 hover:border-slate-400 text-left">{{ s }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div id="chat" class="flex-1 overflow-y-auto px-5 py-4 space-y-6 min-h-0">
+    {% for m in state.chat %}{% set idx = loop.index0 %}{% include "partials/chat_message.html" %}{% endfor %}
+    {% if not state.chat %}
+    <p class="text-sm text-slate-400 text-center py-8">Ask a question to get started. The matrix stays open behind this panel.</p>
+    {% endif %}
+  </div>
+  <div id="chat-error" class="shrink-0 px-5"></div>
+
+  <form id="ask-form" hx-post="/rfx/{{ state.id }}/ask" hx-target="#chat" hx-swap="beforeend"
+        hx-indicator="#ask-busy" hx-disabled-elt="#ask-btn"
+        hx-on::after-request="if(event.detail.successful){this.reset(); const c=document.getElementById('chat'); if(c) c.scrollTop=c.scrollHeight;} else {document.getElementById('chat-error').innerHTML = event.detail.xhr.responseText;}"
+        class="shrink-0 border-t border-slate-200 bg-white p-3">
+    <textarea name="question" rows="2" required
+      placeholder="e.g. Split cheapest per line, but only among vendors who cleared the questionnaire…"
+      class="w-full resize-none rounded-lg border border-slate-300 focus:border-slate-500 focus:ring-1 focus:ring-slate-500 text-sm p-2"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault(); this.form.requestSubmit();}"></textarea>
+    <div class="flex items-center justify-between mt-2 gap-2">
+      <span id="ask-busy" class="htmx-indicator items-center gap-2 text-xs text-slate-600">
+        <svg class="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+        Running calculations (10–40 s)
+      </span>
+      <span class="text-xs text-slate-400 htmx-hide hidden sm:inline">Enter to send</span>
+      <button id="ask-btn" type="submit" class="rounded-lg bg-slate-900 text-white px-4 py-1.5 text-sm font-medium hover:bg-slate-800 disabled:opacity-50" {% if not ai_ok %}disabled{% endif %}>Ask</button>
+    </div>
+  </form>
+
+  <details class="shrink-0 border-t border-slate-100 px-5 py-2 text-xs text-slate-500">
+    <summary class="cursor-pointer hover:text-slate-800">How answers are built</summary>
+    <ol class="mt-1 list-decimal pl-4 space-y-1 pb-2">
+      <li>The model picks engine functions (cheapest per line, totals, award scenarios, sensitivity, flags).</li>
+      <li>The engine computes with pandas over the normalised comparison. Flagged cells are excluded unless you ask to include them.</li>
+      <li>The tables under an answer are the raw function results. The prose is the model's reading of them.</li>
+    </ol>
+  </details>
+  {% endif %}
+</div>

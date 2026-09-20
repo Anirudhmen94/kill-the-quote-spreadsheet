@@ -63,6 +63,10 @@ def compare_page(request: Request, rfx_id: str):
             },
         )
         storage.save_state(rfx_id, state)
+    from routes.ask import SUGGESTED
+
+    ready = any(v.get("extraction") for v in state["vendors"])
+    prompts = demo_ops.DEMO_PROMPTS if demo_ops.is_demo_mode(state) else SUGGESTED
     return render(
         request,
         "compare.html",
@@ -73,6 +77,8 @@ def compare_page(request: Request, rfx_id: str):
         exclusion_summary=cmp.get("exclusion_summary"),
         gates=cmp.get("gates"),
         active="compare",
+        suggested=prompts,
+        ready=ready,
     )
 
 

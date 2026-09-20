@@ -25,7 +25,7 @@
 {% endif %}
 {% if version_events %}
 {% set latest = version_events[-1] %}
-{% if latest and active == 'inbox' %}
+{% if latest and active in ('inbox', 'email') %}
 <div class="mb-3 rounded-md border border-sky-200 bg-sky-50 text-sky-900 text-xs px-3 py-2">
   {{ latest.message }}
 </div>

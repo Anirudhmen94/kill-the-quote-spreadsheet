@@ -124,13 +124,14 @@ def send_rfx(request: Request, rfx_id: str):
             state["vendors"] = [vendor_sim.empty_vendor(v) for v in vendor_sim.VENDORS]
         state["status"] = "sent"
         storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/inbox")
+    return hx_redirect(f"/rfx/{rfx_id}/email")
 
 
 @app.get("/rfx/{rfx_id}/outbox", response_class=HTMLResponse)
 def outbox(request: Request, rfx_id: str):
-    state = load_or_404(rfx_id)
-    return render(request, "outbox.html", state=state, active="inbox")
+    """Legacy alias → Email (outbox tab)."""
+    load_or_404(rfx_id)
+    return RedirectResponse(f"/rfx/{rfx_id}/email#outbox", status_code=303)
 
 
 @app.get("/rfx/{rfx_id}/ai-log", response_class=HTMLResponse)
@@ -212,7 +213,7 @@ def demo_full_reset(rfx_id: str, confirm: str = Form("")):
         v["error"] = None
     snapshots.bump_vendor_data_version(state, "manual_edit", affected_vendor_ids=[v["vendor_id"] for v in state.get("vendors", [])], notice="Full reset · extractions and awards cleared")
     storage.save_state(rfx_id, state)
-    return RedirectResponse(f"/rfx/{rfx_id}/inbox", status_code=303)
+    return RedirectResponse(f"/rfx/{rfx_id}/email", status_code=303)
 
 
 @app.get("/demo/script")

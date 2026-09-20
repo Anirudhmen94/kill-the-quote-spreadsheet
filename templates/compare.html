@@ -10,13 +10,13 @@
   <div class="flex items-center gap-2">
     <a href="/rfx/{{ state.id }}/export.csv" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">CSV</a>
     <a href="/rfx/{{ state.id }}/export.xlsx" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Excel workbook</a>
-    <a href="/rfx/{{ state.id }}/ask" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Ask the analyst</a>
+    <button type="button" onclick="openAnalyst()" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Ask the analyst</button>
   </div>
 </div>
 
 {% if not extracted %}
 <div class="mt-8 rounded-lg border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
-  No vendor responses have been read yet. <a href="/rfx/{{ state.id }}/inbox" class="underline">Go to the inbox</a> and read them first.
+  No vendor responses have been read yet. <a href="/rfx/{{ state.id }}/email#inbox" class="underline">Go to Email</a> and read them first.
 </div>
 {% else %}
 
@@ -158,4 +158,66 @@
 </div>
 <p class="mt-3 text-xs text-slate-500">Green ring marks the cheapest usable quote on each line. Amber and red cells are excluded from every total until you review them. Footer totals are each vendor's own coverage and are not comparable across vendors; use the analyst for like-for-like totals.</p>
 {% endif %}
+
+{# Right-side Ask analyst slide-over — matrix stays primary #}
+<div id="analyst-drawer" class="fixed inset-0 z-40 hidden" aria-hidden="true">
+  <div class="absolute inset-0 bg-slate-900/40" onclick="closeAnalyst()"></div>
+  <aside id="analyst-panel" class="absolute right-0 top-0 h-full w-full sm:w-[440px] lg:w-[520px] bg-white shadow-2xl flex flex-col transform translate-x-full transition-transform duration-200 ease-out" role="dialog" aria-label="Ask the analyst">
+    {% include "partials/ask_panel.html" %}
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  function openAnalyst() {
+    const root = document.getElementById('analyst-drawer');
+    const panel = document.getElementById('analyst-panel');
+    if (!root || !panel) return;
+    root.classList.remove('hidden');
+    root.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(() => panel.classList.remove('translate-x-full'));
+    if (location.hash !== '#analyst') history.replaceState(null, '', location.pathname + location.search + '#analyst');
+    const chat = document.getElementById('chat');
+    if (chat) chat.scrollTop = chat.scrollHeight;
+  }
+  function closeAnalyst() {
+    const root = document.getElementById('analyst-drawer');
+    const panel = document.getElementById('analyst-panel');
+    if (!panel || !root) return;
+    panel.classList.add('translate-x-full');
+    setTimeout(() => {
+      root.classList.add('hidden');
+      root.setAttribute('aria-hidden', 'true');
+    }, 200);
+    if (location.hash === '#analyst') history.replaceState(null, '', location.pathname + location.search);
+  }
+  window.openAnalyst = openAnalyst;
+  window.closeAnalyst = closeAnalyst;
+
+  if (location.hash === '#analyst') openAnalyst();
+  window.addEventListener('hashchange', () => {
+    if (location.hash === '#analyst') openAnalyst();
+    else if (!document.getElementById('analyst-drawer').classList.contains('hidden')) closeAnalyst();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !document.getElementById('analyst-drawer').classList.contains('hidden')) closeAnalyst();
+  });
+
+  function drawCharts(root) {
+    root.querySelectorAll('canvas[data-chart]').forEach(cv => {
+      if (cv.dataset.done) return;
+      cv.dataset.done = '1';
+      const spec = JSON.parse(cv.dataset.chart);
+      const palette = ['#0f172a','#0284c7','#059669','#d97706','#dc2626','#7c3aed','#64748b'];
+      new Chart(cv, {
+        type: spec.type || 'bar',
+        data: { labels: spec.labels, datasets: spec.datasets.map((d,i) => ({...d, backgroundColor: palette[i % palette.length]})) },
+        options: { responsive: true, plugins: { title: { display: !!spec.title, text: spec.title }, legend: { display: spec.datasets.length > 1 } },
+                   scales: { x: { stacked: !!spec.stacked }, y: { stacked: !!spec.stacked, beginAtZero: true } } }
+      });
+    });
+  }
+  drawCharts(document);
+  document.body.addEventListener('htmx:afterSwap', e => drawCharts(e.target));
+</script>
 {% endblock %}

@@ -7,7 +7,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core import clarify, demo_ops, extractor, ingest, llm, snapshots, storage, vendor_sim
 from core.web import error_fragment, hx_redirect, load_or_404, now_iso, render
@@ -25,10 +25,17 @@ def _vendor(state: dict, vendor_id: str) -> dict:
     raise HTTPException(404, "vendor not found")
 
 
+@router.get("/rfx/{rfx_id}/email", response_class=HTMLResponse)
+def email_page(request: Request, rfx_id: str):
+    state = load_or_404(rfx_id)
+    return render(request, "email.html", state=state, active="email", data_status_context="inbox")
+
+
 @router.get("/rfx/{rfx_id}/inbox", response_class=HTMLResponse)
 def inbox_page(request: Request, rfx_id: str):
-    state = load_or_404(rfx_id)
-    return render(request, "inbox.html", state=state, active="inbox")
+    """Legacy alias → Email (incoming tab)."""
+    q = ("?" + request.url.query) if request.url.query else ""
+    return RedirectResponse(f"/rfx/{rfx_id}/email{q}#inbox", status_code=303)
 
 
 @router.post("/rfx/{rfx_id}/simulate", response_class=HTMLResponse)
@@ -46,8 +53,8 @@ def simulate(request: Request, rfx_id: str, then: str | None = None):
     except Exception as e:
         return error_fragment(f"Could not generate vendor replies: {e}")
     if then == "extract" and llm.is_configured():
-        return hx_redirect(f"/rfx/{rfx_id}/inbox?extract=1")
-    return hx_redirect(f"/rfx/{rfx_id}/inbox")
+        return hx_redirect(f"/rfx/{rfx_id}/email?extract=1")
+    return hx_redirect(f"/rfx/{rfx_id}/email")
 
 
 @router.post("/rfx/{rfx_id}/upload", response_class=HTMLResponse)
@@ -89,7 +96,7 @@ async def upload(request: Request, rfx_id: str, new_vendor_name: str = Form(""),
         affected_file_ids=file_ids,
     )
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/inbox")
+    return hx_redirect(f"/rfx/{rfx_id}/email")
 
 
 
@@ -132,7 +139,7 @@ def extract_all(request: Request, rfx_id: str):
         if v.get("files") and v.get("status") not in ("extracted",)
     ]
     if not pending:
-        return hx_redirect(f"/rfx/{rfx_id}/inbox")
+        return hx_redirect(f"/rfx/{rfx_id}/email")
     if not llm.is_configured():
         return error_fragment("ANTHROPIC_API_KEY is not set. Extraction refuses to invent output.", 400)
 
@@ -194,7 +201,7 @@ def extract_all(request: Request, rfx_id: str):
             state["status"] = "compared"
         storage.save_state(rfx_id, state)
 
-    return hx_redirect(f"/rfx/{rfx_id}/inbox")
+    return hx_redirect(f"/rfx/{rfx_id}/email")
 
 
 @router.post("/rfx/{rfx_id}/vendor/{vendor_id}/extract", response_class=HTMLResponse)
@@ -332,4 +339,4 @@ def remove_vendor(request: Request, rfx_id: str, vendor_id: str):
     state["vendors"] = [v for v in state["vendors"] if v["vendor_id"] != vendor_id]
     snapshots.bump_vendor_data_version(state, "vendor_deleted", affected_vendor_ids=[vendor_id])
     storage.save_state(rfx_id, state)
-    return hx_redirect(f"/rfx/{rfx_id}/inbox")
+    return hx_redirect(f"/rfx/{rfx_id}/email")

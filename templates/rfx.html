@@ -8,8 +8,8 @@
   </div>
   <div class="flex items-center gap-2">
     {% if state.outbox %}
-      <a href="/rfx/{{ state.id }}/outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
-      <a href="/rfx/{{ state.id }}/inbox" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Go to inbox</a>
+      <a href="/rfx/{{ state.id }}/email#outbox" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">Outbox ({{ state.outbox|length }})</a>
+      <a href="/rfx/{{ state.id }}/email#inbox" class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Go to Email</a>
     {% else %}
       <form hx-post="/rfx/{{ state.id }}/send" hx-target="#send-result">
         <button class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm font-medium hover:bg-slate-800">Send to {{ vendors|length }} vendors</button>

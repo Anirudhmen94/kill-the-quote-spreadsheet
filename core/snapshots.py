@@ -455,7 +455,7 @@ def unresolved_summary(state: dict) -> dict:
 def data_status(state: dict, context: str = "global", answer: dict | None = None) -> dict:
     """UI-facing data status for the banner.
 
-    context: 'global' | 'ask_answer' | 'compare' | 'award' | 'inbox'
+    context: 'global' | 'ask_answer' | 'compare' | 'award' | 'inbox' | 'email'
     """
     ensure_snapshot_fields(state)
     ver = current_version(state)
@@ -505,7 +505,7 @@ def data_status(state: dict, context: str = "global", answer: dict | None = None
                 "unresolved": unresolved,
             }
 
-    if context == "inbox":
+    if context in ("inbox", "email"):
         if counts["with_files"] == 0:
             kind_text = "Awaiting responses"
         elif counts["all_extracted"] and counts["failed"] == 0:

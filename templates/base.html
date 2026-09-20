@@ -32,11 +32,11 @@
       </a>
       {% if rfx_id %}
       <nav class="flex items-center gap-1 text-xs sm:text-sm overflow-x-auto">
-        {% set steps = [('rfx','RFx'),('inbox','Inbox'),('compare','Compare'),('ask','Ask'),('award','Award')] %}
+        {% set steps = [('rfx','RFx'),('email','Email'),('compare','Compare'),('award','Award')] %}
         {% for key, label in steps %}
           <a href="/rfx/{{ rfx_id }}/{{ key }}"
              class="px-2.5 py-1.5 rounded-md whitespace-nowrap {% if active == key %}bg-slate-900 text-white{% else %}text-slate-600 hover:bg-slate-100{% endif %}">
-            <span class="opacity-60 mr-1">{{ loop.index }}</span>{{ label }}
+            {{ label }}
           </a>
         {% endfor %}
       </nav>
