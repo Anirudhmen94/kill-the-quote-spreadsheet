@@ -5,3 +5,53 @@
   <span role="tooltip" class="pointer-events-none absolute left-1/2 top-full z-20 mt-1 hidden {{ width }} -translate-x-1/2 rounded-md border border-slate-200 bg-white p-2 text-[11px] font-normal text-slate-700 shadow-lg group-hover:block group-focus:block group-focus-within:block normal-case tracking-normal leading-snug">{{ text }}</span>
 </span>
 {%- endmacro %}
+
+{% macro filter_bar_shell(bar_id, tip_text="Display-only filters. Totals and award maths are unchanged.", search_fields="search", items_sel="", empty_target="", url_sync=false, url_prefix="", url_keys="", columns_sel="", col_cells_sel="", multi_attrs="") -%}
+{# Shared compact filter bar chrome. Use {% call filter_bar_shell(...) %}controls{% endcall %} #}
+<div id="{{ bar_id }}"
+     class="mt-4 rounded-lg border border-slate-200 bg-white px-3 py-2 flex flex-wrap items-center gap-2 text-sm"
+     data-filter-bar="{{ bar_id }}"
+     data-search-fields="{{ search_fields }}"
+     {% if items_sel %}data-filter-items="{{ items_sel }}"{% endif %}
+     {% if empty_target %}data-empty-target="{{ empty_target }}"{% endif %}
+     {% if columns_sel %}data-filter-columns="{{ columns_sel }}"{% endif %}
+     {% if col_cells_sel %}data-filter-col-cells="{{ col_cells_sel }}"{% endif %}
+     {% if url_sync %}data-url-sync="1" data-url-prefix="{{ url_prefix }}" data-url-keys="{{ url_keys }}"{% endif %}
+     {% if multi_attrs %}{{ multi_attrs|safe }}{% endif %}
+     title="{{ tip_text }}">
+  <span class="text-xs font-medium text-slate-600 shrink-0 inline-flex items-center gap-1">
+    Filter
+    {{ tip(tip_text, aria="Filter help", width="w-64") }}
+  </span>
+  {{ caller() }}
+  <button type="button" data-filter-clear
+          class="rounded border border-slate-300 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+          title="Clear search and filters">Clear</button>
+  <span data-filter-count class="text-xs text-slate-500 tabular-nums ml-auto" aria-live="polite"></span>
+  <div data-filter-empty class="hidden w-full rounded border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-center text-xs text-slate-600" hidden>
+    No matches — clear filters
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro filter_search(placeholder="Search…", title="Search") -%}
+<input type="search" data-filter-control="search"
+       placeholder="{{ placeholder }}" title="{{ title }}"
+       class="min-w-[10rem] flex-1 rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
+       autocomplete="off">
+{%- endmacro %}
+
+{% macro filter_select(name, label, options, title="", item_attr="", list_contains=false) -%}
+<label class="inline-flex items-center gap-1 text-xs text-slate-600 shrink-0" title="{{ title or label }}">
+  <span class="sr-only sm:not-sr-only">{{ label }}</span>
+  <select data-filter-control="{{ name }}"
+          {% if item_attr %}data-item-attr="{{ item_attr }}"{% endif %}
+          {% if list_contains %}data-list-contains="1"{% endif %}
+          class="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800 max-w-[9rem]"
+          title="{{ title or label }}">
+    {% for val, lab in options %}
+    <option value="{{ val }}">{{ lab }}</option>
+    {% endfor %}
+  </select>
+</label>
+{%- endmacro %}

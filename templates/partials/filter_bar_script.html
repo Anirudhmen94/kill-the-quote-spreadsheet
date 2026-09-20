@@ -1,0 +1,306 @@
+{# Shared client-side filter helper. Include once per page that uses [data-filter-bar]. #}
+<script>
+(function (global) {
+  if (global.KqFilterBar) return;
+
+  function norm(s) {
+    return (s == null ? '' : String(s)).toLowerCase().trim();
+  }
+
+  function tokens(q) {
+    return norm(q).split(/\s+/).filter(Boolean);
+  }
+
+  function dataGet(el, name) {
+    if (!el) return '';
+    const camel = name.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    if (el.dataset && el.dataset[camel] != null) return el.dataset[camel];
+    return el.getAttribute('data-' + name) || '';
+  }
+
+  function parseList(s) {
+    return norm(s).split(/[,\s]+/).filter(Boolean);
+  }
+
+  function setHidden(el, hide) {
+    if (!el) return;
+    el.classList.toggle('hidden', !!hide);
+    if (hide) el.setAttribute('hidden', '');
+    else el.removeAttribute('hidden');
+    if (el.dataset) el.dataset.filterHidden = hide ? '1' : '0';
+  }
+
+  function multiSelected(root, name) {
+    const boxes = [...root.querySelectorAll('[data-filter-multi="' + name + '"]')];
+    if (!boxes.length) return null;
+    const checked = boxes.filter((b) => b.checked).map((b) => String(b.value));
+    if (!checked.length || checked.length === boxes.length) return null; // all / none → no filter
+    return new Set(checked);
+  }
+
+  function readState(root) {
+    const state = { search: '', selects: {}, multis: {} };
+    const searchEl = root.querySelector('[data-filter-control="search"]');
+    if (searchEl) state.search = searchEl.value || '';
+    root.querySelectorAll('[data-filter-control]').forEach((el) => {
+      const key = el.getAttribute('data-filter-control');
+      if (key === 'search') return;
+      state.selects[key] = {
+        value: el.value || 'all',
+        itemAttr: el.getAttribute('data-item-attr') || key,
+        listContains: el.getAttribute('data-list-contains') === '1',
+      };
+    });
+    const multiNames = new Set(
+      [...root.querySelectorAll('[data-filter-multi]')].map((el) => el.getAttribute('data-filter-multi'))
+    );
+    multiNames.forEach((name) => {
+      state.multis[name] = {
+        set: multiSelected(root, name),
+        itemAttr: root.getAttribute('data-multi-attr-' + name) || name,
+      };
+    });
+    return state;
+  }
+
+  function matchSearch(item, query, fieldNames) {
+    if (!query) return true;
+    const fields = (fieldNames || 'search').split(',').map((f) => f.trim()).filter(Boolean);
+    const present = fields.filter((f) => item.hasAttribute('data-' + f));
+    // Items with none of the search fields (e.g. freeze markers) ignore text search
+    if (!present.length) return true;
+    const hay = present.map((f) => norm(dataGet(item, f))).join(' · ');
+    return tokens(query).every((t) => hay.includes(t));
+  }
+
+  function matchSelectValue(itemVal, wanted, opts) {
+    if (!wanted || wanted === 'all') return true;
+    if (wanted === 'flagged') {
+      const st = norm(itemVal);
+      return st === 'needs_review' || st === 'unresolved';
+    }
+    if (opts && opts.aliases && opts.aliases[wanted]) {
+      return opts.aliases[wanted].map(norm).includes(norm(itemVal));
+    }
+    if (opts && opts.listContains) {
+      return parseList(itemVal).includes(norm(wanted));
+    }
+    return norm(itemVal) === norm(wanted);
+  }
+
+  function matchItem(item, state, root) {
+    const searchFields = root.getAttribute('data-search-fields') || 'search';
+    if (!matchSearch(item, state.search, searchFields)) return false;
+
+    for (const [key, sel] of Object.entries(state.selects)) {
+      // cell-status on matrix rows is handled separately
+      if (key === 'cell-status' && item.hasAttribute('data-filter-row')) continue;
+      // gate / vendors on matrix are column filters
+      if (key === 'gate' && root.getAttribute('data-filter-columns')) continue;
+      if (!sel.value || sel.value === 'all') continue;
+      // Items without this attribute do not participate in this filter
+      const attrName = 'data-' + sel.itemAttr;
+      if (!item.hasAttribute(attrName)) continue;
+      const aliases = key === 'status' || sel.itemAttr === 'status'
+        ? { awaiting: ['awaiting', 'received'] }
+        : null;
+      if (!matchSelectValue(dataGet(item, sel.itemAttr), sel.value, {
+        listContains: sel.listContains,
+        aliases,
+      })) return false;
+    }
+
+    for (const [name, multi] of Object.entries(state.multis)) {
+      if (!multi.set) continue;
+      // column-level vendor multi is handled in applyColumns
+      if (name === 'vendors' && root.getAttribute('data-filter-columns')) continue;
+      const attrName = 'data-' + multi.itemAttr;
+      if (!item.hasAttribute(attrName)) continue;
+      const raw = dataGet(item, multi.itemAttr);
+      const list = parseList(raw);
+      const ok = multi.set.has(String(raw)) || list.some((v) => multi.set.has(v));
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  function applyColumns(root, state) {
+    const colSel = root.getAttribute('data-filter-columns');
+    if (!colSel) return;
+    const cols = [...document.querySelectorAll(colSel)];
+    const vendorMulti = state.multis.vendors && state.multis.vendors.set;
+    const gateSel = state.selects.gate;
+    const gate = gateSel && gateSel.value && gateSel.value !== 'all' ? norm(gateSel.value) : null;
+    const search = state.search;
+    const searchFields = (root.getAttribute('data-search-fields') || '').split(',');
+    const vendorNameField = searchFields.includes('vendor-names') || searchFields.includes('vendor-name');
+
+    const visibleVendors = new Set();
+    cols.forEach((col) => {
+      const vid = dataGet(col, 'vendor-id');
+      let show = true;
+      if (vendorMulti && !vendorMulti.has(String(vid))) show = false;
+      if (gate) {
+        const g = norm(dataGet(col, 'gate'));
+        if (g !== gate) show = false;
+      }
+      // If search tokens match a vendor name exclusively, still show columns that match
+      if (show && search && vendorNameField) {
+        // Column visibility not reduced by line search; vendor-name search soft-matches columns:
+        // if ANY token matches a vendor name across cols, hide cols that match no tokens.
+        // Only activate when the full query matches at least one vendor name.
+      }
+      setHidden(col, !show);
+      if (show) visibleVendors.add(String(vid));
+    });
+
+    // Soft vendor-name search: if query matches one or more vendor names, prefer those columns
+    if (search && vendorNameField) {
+      const q = norm(search);
+      const nameHits = cols.filter((col) => norm(dataGet(col, 'vendor-name')).includes(q) || tokens(search).every((t) => norm(dataGet(col, 'vendor-name')).includes(t)));
+      if (nameHits.length && nameHits.length < cols.length) {
+        // Don't hide others solely due to vendor name — row search handles lines.
+        // Dim non-matching vendor columns instead when query looks like a vendor.
+        const hitIds = new Set(nameHits.map((c) => dataGet(c, 'vendor-id')));
+        const onlyVendor = !tokens(search).some((t) => {
+          // if any line would match, skip dimming — checked by rows
+          return false;
+        });
+        void onlyVendor;
+        void hitIds;
+      }
+    }
+
+    const cellSel = root.getAttribute('data-filter-col-cells');
+    if (cellSel) {
+      document.querySelectorAll(cellSel).forEach((cell) => {
+        const vid = String(dataGet(cell, 'vendor-id'));
+        setHidden(cell, !visibleVendors.has(vid));
+      });
+    }
+    return visibleVendors;
+  }
+
+  function syncUrl(root, state) {
+    if (root.getAttribute('data-url-sync') !== '1') return;
+    const prefix = root.getAttribute('data-url-prefix') || '';
+    const keys = (root.getAttribute('data-url-keys') || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (!keys.length) return;
+    const url = new URL(location.href);
+    keys.forEach((pair) => {
+      const [control, param] = pair.includes('=') ? pair.split('=') : [pair, prefix + pair];
+      let val = null;
+      if (control === 'search') val = state.search;
+      else if (state.selects[control]) val = state.selects[control].value;
+      else if (state.multis[control] && state.multis[control].set) val = [...state.multis[control].set].join(',');
+      if (!val || val === 'all') url.searchParams.delete(param);
+      else url.searchParams.set(param, val);
+    });
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
+  }
+
+  function loadUrl(root) {
+    if (root.getAttribute('data-url-sync') !== '1') return;
+    const prefix = root.getAttribute('data-url-prefix') || '';
+    const keys = (root.getAttribute('data-url-keys') || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const url = new URL(location.href);
+    keys.forEach((pair) => {
+      const [control, param] = pair.includes('=') ? pair.split('=') : [pair, prefix + pair];
+      const val = url.searchParams.get(param);
+      if (val == null || val === '') return;
+      const el = root.querySelector('[data-filter-control="' + control + '"]');
+      if (el) {
+        el.value = val;
+        return;
+      }
+      const boxes = root.querySelectorAll('[data-filter-multi="' + control + '"]');
+      if (boxes.length) {
+        const set = new Set(val.split(','));
+        boxes.forEach((b) => { b.checked = set.has(b.value); });
+      }
+    });
+  }
+
+  function apply(root) {
+    const state = readState(root);
+    applyColumns(root, state);
+
+    const itemSel = root.getAttribute('data-filter-items');
+    if (!itemSel) return;
+    const items = [...document.querySelectorAll(itemSel)];
+    const cellStatus = state.selects['cell-status'] && state.selects['cell-status'].value;
+
+    let shown = 0;
+    items.forEach((item) => {
+      let ok = matchItem(item, state, root);
+
+      if (ok && cellStatus && cellStatus !== 'all' && item.hasAttribute('data-filter-row')) {
+        const cells = [...item.querySelectorAll('[data-cell-status]')].filter(
+          (c) => c.dataset.filterHidden !== '1'
+        );
+        ok = cells.some((c) => matchSelectValue(dataGet(c, 'cell-status'), cellStatus, {}));
+      }
+
+      setHidden(item, !ok);
+      if (ok) shown += 1;
+    });
+
+    const countEl = root.querySelector('[data-filter-count]');
+    if (countEl) countEl.textContent = 'showing ' + shown + ' of ' + items.length;
+
+    const showEmpty = items.length > 0 && shown === 0;
+    const emptyEl = root.querySelector('[data-filter-empty]');
+    setHidden(emptyEl, !showEmpty);
+    const emptyTarget = root.getAttribute('data-empty-target');
+    if (emptyTarget) setHidden(document.querySelector(emptyTarget), !showEmpty);
+
+    syncUrl(root, state);
+  }
+
+  function clear(root) {
+    root.querySelectorAll('[data-filter-control]').forEach((el) => {
+      if (el.tagName === 'SELECT') {
+        if ([...el.options].some((o) => o.value === 'all')) el.value = 'all';
+        else el.selectedIndex = 0;
+      } else {
+        el.value = '';
+      }
+    });
+    root.querySelectorAll('[data-filter-multi]').forEach((el) => { el.checked = true; });
+    apply(root);
+  }
+
+  function init(root) {
+    if (!root || root.dataset.filterReady === '1') return;
+    root.dataset.filterReady = '1';
+    loadUrl(root);
+    const onChange = (e) => {
+      if (e.target && (e.target.matches('[data-filter-control], [data-filter-multi]') || e.target.closest('[data-filter-control], [data-filter-multi]'))) {
+        apply(root);
+      }
+    };
+    root.addEventListener('input', onChange);
+    root.addEventListener('change', onChange);
+    const btn = root.querySelector('[data-filter-clear]');
+    if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); clear(root); });
+    apply(root);
+  }
+
+  function initAll(scope) {
+    (scope || document).querySelectorAll('[data-filter-bar]').forEach(init);
+  }
+
+  global.KqFilterBar = { init: init, initAll: initAll, apply: apply, clear: clear };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { initAll(document); });
+  } else {
+    initAll(document);
+  }
+})(window);
+</script>

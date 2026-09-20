@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import tip %}
+{% from "macros.html" import tip, filter_bar_shell, filter_search, filter_select %}
 {% block title %}Compare · {{ state.rfx.title }}{% endblock %}
 {% block content %}
 {% set extracted = cmp.vendors|selectattr('status','equalto','extracted')|list %}
@@ -82,16 +82,61 @@
 </div>
 {% endif %}
 
+
+{% call filter_bar_shell(
+  "compare-matrix-filters",
+  tip_text="Display-only matrix filters. Comparison totals and award maths are unchanged.",
+  search_fields="description,sku,vendor-names",
+  items_sel="#compare-matrix tbody tr[data-filter-row]",
+  empty_target="#compare-matrix-empty",
+  url_sync=true,
+  url_prefix="c_",
+  url_keys="search=cq,cell-status=ccell,gate=cgate",
+  columns_sel="#compare-matrix [data-col-vendor]",
+  col_cells_sel="#compare-matrix [data-cell-vendor]",
+  multi_attrs='data-multi-attr-vendors="vendor-id"'
+) %}
+  {{ filter_search(placeholder="Line, SKU, or vendor…", title="Search line description, SKU, or vendor name") }}
+  <details class="relative text-xs">
+    <summary class="cursor-pointer rounded border border-slate-300 bg-white px-2 py-1 text-slate-700 hover:bg-slate-50" title="Show or hide vendor columns">Vendors</summary>
+    <div class="absolute z-20 mt-1 max-h-48 w-56 overflow-auto rounded border border-slate-200 bg-white p-2 shadow-lg space-y-1">
+      {% for v in cmp.vendors %}
+      <label class="flex items-center gap-2 text-slate-700">
+        <input type="checkbox" data-filter-multi="vendors" value="{{ v.vendor_id }}" checked>
+        <span class="truncate">{{ v.name }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </details>
+  {{ filter_select("cell-status", "Cell", [
+      ("all", "All cells"),
+      ("ok", "ok"),
+      ("converted", "converted"),
+      ("reviewed", "reviewed"),
+      ("needs_review", "needs review"),
+      ("unresolved", "unresolved"),
+      ("missing", "missing"),
+      ("flagged", "flagged only"),
+    ], title="Show rows with at least one matching cell status") }}
+  {{ filter_select("gate", "Gate", [
+      ("all", "All gates"),
+      ("Pass", "Pass"),
+      ("Partial", "Partial"),
+      ("Fail", "Fail"),
+    ], title="Hide vendor columns by quality-gate grade") }}
+{% endcall %}
+<div id="compare-matrix-empty" class="hidden mt-2 rounded-lg border border-dashed border-slate-300 bg-white p-4 text-center text-sm text-slate-500" hidden>No matches — clear filters</div>
+
 <div class="mt-4 rounded-lg border border-slate-200 bg-white overflow-hidden">
   <div class="overflow-x-auto">
-    <table class="w-full text-sm min-w-[900px]">
+    <table id="compare-matrix" class="w-full text-sm min-w-[900px]">
       <thead class="bg-slate-50 text-xs text-slate-600 align-bottom">
         <tr>
           <th class="px-2 py-2 text-left sticky left-0 bg-slate-50 z-10 w-8">#</th>
           <th class="px-2 py-2 text-left sticky left-8 bg-slate-50 z-10 min-w-[260px]">Line item</th>
           <th class="px-2 py-2 text-right">Qty/yr</th>
           {% for v in cmp.vendors %}
-          <th class="px-2 py-2 text-right min-w-[128px]">
+          <th class="px-2 py-2 text-right min-w-[128px]" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-vendor-name="{{ v.name }}" data-gate="{{ v.gate or '' }}">
             <button hx-get="/rfx/{{ state.id }}/vendor/{{ v.vendor_id }}/questionnaire" hx-target="#drawer-root" class="text-left w-full hover:underline">
               <div class="font-semibold text-slate-800 normal-case">{{ v.name }}</div>
               <div class="mt-0.5 flex flex-wrap gap-1 justify-end font-normal">
@@ -107,7 +152,10 @@
       </thead>
       <tbody class="divide-y divide-slate-100">
         {% for ln in cmp.lines %}
-        <tr class="hover:bg-slate-50/60">
+        <tr class="hover:bg-slate-50/60" data-filter-row data-filter-item
+            data-description="{{ ln.description }}"
+            data-sku="{{ ln.sku }}"
+            data-vendor-names="{% for v in cmp.vendors %}{{ v.name }}{% if not loop.last %} {% endif %}{% endfor %}">
           <td class="px-2 py-1.5 text-slate-500 sticky left-0 bg-white">{{ ln.line_no }}</td>
           <td class="px-2 py-1.5 sticky left-8 bg-white">
             <div class="truncate max-w-[300px]" title="{{ ln.description }}">{{ ln.description }}</div>
@@ -116,7 +164,8 @@
           <td class="px-2 py-1.5 text-right tabular-nums text-slate-600">{{ ln.annual_qty|num }}</td>
           {% for v in cmp.vendors %}
           {% set c = ln.cells[v.vendor_id] %}
-          <td class="px-1 py-1 text-right">
+          {% set cell_st = 'missing' if c.status in ['missing', 'not_quoted', 'not_extracted'] or c.status is none else c.status %}
+          <td class="px-1 py-1 text-right" data-cell-vendor data-vendor-id="{{ v.vendor_id }}" data-cell-status="{{ cell_st }}" data-gate="{{ v.gate or '' }}">
             <button hx-get="/rfx/{{ state.id }}/evidence/{{ v.vendor_id }}/{{ ln.line_no }}" hx-target="#drawer-root"
               title="Open evidence for this cell — verbatim snippet from the vendor file."
               class="w-full rounded px-1.5 py-1 text-right tabular-nums border transition
@@ -153,13 +202,13 @@
         <tr>
           <td colspan="3" class="px-2 py-2 text-slate-600 sticky left-0 bg-slate-50">Usable lines / extended annual value on those lines only (not like-for-like)</td>
           {% for v in cmp.vendors %}
-          <td class="px-2 py-2 text-right tabular-nums"><div class="font-medium">{{ v.usable }} lines</div><div class="text-slate-600">{{ v.extended_total_usable|inr }}</div></td>
+          <td class="px-2 py-2 text-right tabular-nums" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-gate="{{ v.gate or '' }}"><div class="font-medium">{{ v.usable }} lines</div><div class="text-slate-600">{{ v.extended_total_usable|inr }}</div></td>
           {% endfor %}
         </tr>
         <tr>
           <td colspan="3" class="px-2 py-2 text-slate-600 sticky left-0 bg-slate-50">Cells: ok / converted / review / unresolved / missing</td>
           {% for v in cmp.vendors %}
-          <td class="px-2 py-2 text-right tabular-nums text-slate-600">{{ v.counts.ok }} / {{ v.counts.converted }} / {{ v.counts.needs_review }} / {{ v.counts.unresolved }} / {{ v.counts.missing }}</td>
+          <td class="px-2 py-2 text-right tabular-nums text-slate-600" data-col-vendor data-vendor-id="{{ v.vendor_id }}" data-gate="{{ v.gate or '' }}">{{ v.counts.ok }} / {{ v.counts.converted }} / {{ v.counts.needs_review }} / {{ v.counts.unresolved }} / {{ v.counts.missing }}</td>
           {% endfor %}
         </tr>
       </tfoot>
@@ -180,6 +229,7 @@
 </div>
 {% endblock %}
 {% block scripts %}
+{% include "partials/filter_bar_script.html" %}
 <script>
   function openAnalyst() {
     const root = document.getElementById('analyst-drawer');
