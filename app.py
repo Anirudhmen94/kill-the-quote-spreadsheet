@@ -142,5 +142,14 @@ def serve_local_file(path: str):
 
 
 @app.get("/healthz")
-def healthz():
-    return {"ok": True, "ai": llm.is_configured(), "model": llm.model_name(), "storage": storage.backend_name()}
+def healthz(fingerprint: bool = False):
+    """Liveness plus, on request, a SHA-1 per source file so a deployment can be verified against the repo."""
+    out = {"ok": True, "ai": llm.is_configured(), "model": llm.model_name(), "storage": storage.backend_name()}
+    if fingerprint:
+        import hashlib
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent
+        files = [root / "app.py", root / "requirements.txt", root / "vercel.json"] + sorted((root / "core").glob("*.py")) + sorted((root / "routes").glob("*.py")) + sorted((root / "templates").rglob("*.html"))
+        out["files"] = {str(p.relative_to(root)): hashlib.sha1(p.read_bytes()).hexdigest() for p in files if p.exists()}
+    return out
