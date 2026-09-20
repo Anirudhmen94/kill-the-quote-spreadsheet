@@ -11,6 +11,8 @@
     </p>
   </div>
   <div class="flex flex-wrap gap-2 text-xs">
+    <a href="?status=affects_current_recommendation" class="rounded px-2 py-1 {% if filter_status=='affects_current_recommendation' or not filter_status %}bg-slate-900 text-white{% else %}bg-white border border-slate-300{% endif %}">Affects current recommendation</a>
+
     <a href="/rfx/{{ state.id }}/exceptions?status=open"
        title="Still blocking — needs your override or a manager decision."
        class="rounded-full px-3 py-1 border {% if filter_status=='open' %}bg-slate-900 text-white border-slate-900{% else %}bg-white text-slate-700 border-slate-300{% endif %}">

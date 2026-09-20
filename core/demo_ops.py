@@ -218,8 +218,9 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
 
     # v1 Sri Balaji — per 100, cleared, one alternate needs_review
     v1 = _vendor("v1", "Sri Balaji Packaging", "Chakan", "xlsx", "sales@sribalaji.example")
+    # Realistic per-100 list (~₹9.5–12/pc after ÷100) so Partial vendors can beat Pass under unrestricted.
     q1 = [
-        _q(i, round(10.0 + (i % 5) * 0.4, 2), "INR", "per_100", 100, evidence=_ev("SBP.xlsx", f"B{i+2}", f"{10+(i%5)*0.4}"))
+        _q(i, round(950.0 + i * 8.0, 2), "INR", "per_100", 100, evidence=_ev("SBP.xlsx", f"B{i+2}", f"{950.0+i*8.0:.2f}"))
         for i in range(1, 31)
     ]
     q1[4]["status"] = "needs_review"
@@ -230,6 +231,11 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
     q1[7]["candidate_line_nos"] = [8]
     q1[7]["status"] = "needs_review"
     q1[7]["reason"] = "Ambiguous row mapping; candidate price shown — confirm before award."
+    # Phase D: ensure ≥1 line with no usable quote from anyone (line 30).
+    q1[29]["status"] = "missing"
+    q1[29]["price"] = None
+    q1[29]["reason"] = "Not quoted on this SKU."
+
     v1["extraction"] = _ext(
         q1,
         [],
@@ -245,7 +251,7 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
     # v2 Kraftline — 27/30, freight extra, footnote discount, cleared
     v2 = _vendor("v2", "Kraftline Industries", "Nashik", "pdf", "quotes@kraftline.example")
     q2 = [
-        _q(i, round(9.2 + (i % 7) * 0.3, 2), "INR", "per_pc", 1, evidence=_ev("Kraftline.pdf", f"p.1 r{i}", f"{9.2+(i%7)*0.3}"))
+        _q(i, round(9.0 + i * 0.11, 2), "INR", "per_pc", 1, evidence=_ev("Kraftline.pdf", f"p.1 r{i}", f"{9.0+i*0.11:.2f}"))
         for i in range(1, 28)
     ]
     v2["extraction"] = _ext(
@@ -261,13 +267,25 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
 
     # v3 PakAsia — USD per 1000, CIF, Q3 unanswered → Partial gate
     v3 = _vendor("v3", "PakAsia Global", "Singapore", "docx", "tenders@pakasia.example")
-    q3 = [
-        _q(i, round(95.0 + (i % 6) * 3.5, 1), "USD", "per_1000", 1000, conf=0.88, evidence=_ev("PakAsia.docx", f"L{i}", f"USD {95+(i%6)*3.5} / 1,000"))
-        for i in range(1, 31)
-    ]
+    # Lines 3–15 share one blended USD/1000 rate across dissimilar specs (Phase D detector).
+    # Lines outside that band are priced aggressively so unrestricted split differs from gated.
+    q3 = []
+    for i in range(1, 31):
+        if 3 <= i <= 15:
+            price, note = 100.0, "blended rate USD 100 / 1,000 for lines 3–15"
+        elif i == 30:
+            continue  # coverage gap — not quoted
+        else:
+            # Cheap unique rates so Partial PakAsia wins under unrestricted
+            price = round(60.0 + i * 0.7, 1)
+            note = f"USD {price} / 1,000"
+        q3.append(
+            _q(i, price, "USD", "per_1000", 1000, conf=0.88, evidence=_ev("PakAsia.docx", f"L{i}", note))
+        )
+    q3_not_quoted = [30]
     v3["extraction"] = _ext(
         q3,
-        [],
+        q3_not_quoted,
         [
             _qa("Q1", "Yes — ISO 9001:2015"),
             _qa("Q2", "Yes"),
@@ -279,21 +297,32 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
             _term("freight", "CIF Nhava Sheva", applies="all lines"),
             _term("payment_terms", "LC at sight"),
         ],
-        notes="USD per 1,000. CIF Nhava Sheva — inland to Chakan NOT included. Knockout Q3 unanswered.",
+        notes="USD per 1,000. Lines 3–15 offered as a single blended rate despite mixed flute/gsm. CIF Nhava Sheva — inland to Chakan NOT included. Knockout Q3 unanswered.",
     )
+    # Drop line 30 so the coverage gap is real (Kraftline/Meghna already omit it).
+    v3["extraction"]["line_quotes"] = [q for q in v3["extraction"]["line_quotes"] if q.get("line_no") != 30]
+    v3["extraction"].setdefault("not_quoted_line_nos", [])
+    if 30 not in v3["extraction"]["not_quoted_line_nos"]:
+        v3["extraction"]["not_quoted_line_nos"].append(30)
 
     # v4 Meghna — photo per box/20, empty questionnaire, low confidence, 28/30
     v4 = _vendor("v4", "Meghna Corrugators", "Vatva", "image", "info@meghna.example")
     q4 = [
-        _q(i, 180 + (i % 8) * 12, "INR", "per_box", 20, conf=0.58, evidence=_ev("IMG_ratecard.jpg", f"row~{i}", f"Rate (Rs./Box) {180+(i%8)*12}"))
+        _q(i, 180 + i * 7, "INR", "per_box", 20, conf=0.58, evidence=_ev("IMG_ratecard.jpg", f"row~{i}", f"Rate (Rs./Box) {180+i*7}"))
         for i in range(1, 29)
     ]
     v4["extraction"] = _ext(
         q4,
         [29, 30],
-        [],
+        [
+            _qa("Q1", "No", conf=0.9),
+            _qa("Q2", "", answered=False, status="missing", conf=0),
+            _qa("Q3", "", answered=False, status="missing", conf=0),
+            _qa("Q4", "", answered=False, status="missing", conf=0),
+            _qa("Q5", "", answered=False, status="missing", conf=0),
+        ],
         [_term("freight", "Ex-factory Vatva")],
-        notes="Angled phone photo. 'Per box of 20 nos' only in small print. Questionnaire unanswered.",
+        notes="Angled phone photo. 'Per box of 20 nos' only in small print. Knockout Q1 answered No → gate Fail.",
     )
 
     # v5 Ganesh — per kg for 3/5-ply, unresolved for 7-ply ("same as last year")
@@ -341,6 +370,13 @@ def build_golden_seed(existing_id: str | None = None) -> dict:
         [_term("freight", "Freight extra")],
         notes="One-line email: ₹54/kg 5-ply, ₹51/kg 3-ply, rest same as last year, freight extra.",
     )
+    # Force line 30 unresolved so the no-usable-quote gap sticks even if board isn't 7-ply.
+    for _qrow in v5["extraction"]["line_quotes"]:
+        if _qrow.get("line_no") == 30:
+            _qrow["status"] = "unresolved"
+            _qrow["price"] = None
+            _qrow["reason"] = "Vendor wrote 'rest same as last year' — we do not have last year's prices."
+
 
     state["vendors"] = [v1, v2, v3, v4, v5]
     snapshots.ensure_snapshot_fields(state)

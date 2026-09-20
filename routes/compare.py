@@ -163,6 +163,8 @@ def review(request: Request, rfx_id: str, vendor_id: str, line_no: int, action: 
         if not note.strip():
             return error_fragment("A note is required so the audit log explains the decision.", 400)
         state["reviews"].append({"vendor_id": vendor_id, "vendor_name": vendor["name"], "line_no": line_no, "action": action, "value_inr": val, "note": note.strip(), "at": now_iso()})
+        from core import scenario as _scenario
+        _scenario.append_buyer_review_log(state, {"source": "evidence", "vendor_id": vendor_id, "vendor_name": vendor["name"], "line_no": line_no, "action": action, "value_inr": val, "note": note.strip()})
         reason = "review_accepted" if action == "accept" else "review_overridden"
         snapshots.bump_vendor_data_version(state, reason, affected_vendor_ids=[vendor_id])
     else:
@@ -184,6 +186,8 @@ def questionnaire(request: Request, rfx_id: str, vendor_id: str):
 
 @router.get("/rfx/{rfx_id}/award", response_class=HTMLResponse)
 def award_page(request: Request, rfx_id: str):
+    from core import scenario
+
     state = load_or_404(rfx_id)
     live = snapshots.live_award_calculation(state) if any(v.get("extraction") for v in state["vendors"]) else {"available": False}
     if live.get("available"):
@@ -197,6 +201,19 @@ def award_page(request: Request, rfx_id: str):
     if flash is not None:
         # flash consumed — persist cleared flash
         storage.save_state(rfx_id, state)
+
+    life = scenario.recommendation_lifecycle(state)
+    freeze_check_complete = freeze.validate_freeze_request(state, mode="complete")
+    if split and split.get("rows"):
+        for r in split["rows"]:
+            if not r.get("runner_up"):
+                r["runner_up"] = "—"
+                r["gap_pct"] = None
+            elif r.get("gap_pct") is None:
+                r["gap_display"] = "—"
+            else:
+                r["gap_display"] = f"{r['gap_pct']:g}%"
+
     return render(
         request,
         "award.html",
@@ -214,9 +231,13 @@ def award_page(request: Request, rfx_id: str):
         active="award",
         has_blocking_exceptions=exc_mod.has_blocking_exceptions(state),
         flash=flash,
+        recommendation_lifecycle=life,
+        market_quote_coverage=cmp.get("market_quote_coverage"),
+        freeze_check_complete=freeze_check_complete,
+        discount_confirmations=state.get("discount_confirmations") or {},
+        buyer_review_log=state.get("buyer_review_log") or state.get("reviews") or [],
+        blended_rate_banner=cmp.get("blended_rate_banner"),
     )
-
-
 
 
 
@@ -286,14 +307,44 @@ def export_memo(rfx_id: str, provisional: bool = False):
 
 
 @router.post("/rfx/{rfx_id}/award/freeze", response_class=HTMLResponse)
-def freeze_award_route(request: Request, rfx_id: str, confirm_assumed: bool = Form(False)):
+async def freeze_award_route(
+    request: Request,
+    rfx_id: str,
+    confirm_assumed: bool = Form(False),
+    freeze_mode: str = Form("complete"),
+    partial_reason: str = Form(""),
+):
     state = load_or_404(rfx_id)
     if not any(v.get("extraction") for v in state["vendors"]):
         return error_fragment("Extract vendor responses before freezing an award.", 400)
+    form = await request.form()
+    acks = form.getlist("acknowledgement") if hasattr(form, "getlist") else []
     try:
-        freeze.freeze_award(state, confirm_assumed=confirm_assumed, require_quality_gate=True)
+        freeze.freeze_award(
+            state,
+            confirm_assumed=confirm_assumed,
+            require_quality_gate=True,
+            mode=freeze_mode or "complete",
+            acknowledgements=list(acks),
+            partial_reason=partial_reason or "",
+        )
     except ValueError as e:
         return error_fragment(str(e), 400)
+    storage.save_state(rfx_id, state)
+    return hx_redirect(f"/rfx/{rfx_id}/award")
+
+
+@router.post("/rfx/{rfx_id}/award/confirm-discount", response_class=HTMLResponse)
+def confirm_discount_route(request: Request, rfx_id: str, vendor_id: str = Form(...)):
+    """Buyer confirms a conditional discount into the official total (Phase A.4)."""
+    state = load_or_404(rfx_id)
+    state.setdefault("discount_confirmations", {})
+    state["discount_confirmations"][vendor_id] = {
+        "confirmed_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(timespec="seconds"),
+        "confirmed": True,
+    }
+    from core import snapshots
+    snapshots.bump_vendor_data_version(state, "discount_confirmed", affected_vendor_ids=[vendor_id])
     storage.save_state(rfx_id, state)
     return hx_redirect(f"/rfx/{rfx_id}/award")
 

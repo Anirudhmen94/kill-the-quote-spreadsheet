@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from . import awardability, snapshots
+from . import awardability, scenario, snapshots
 from .gates import evaluate_gates
 
 OPEN_STATUSES = {"open", "rejected"}
@@ -44,6 +44,40 @@ def exception_key(
     if kind == "coverage_gap":
         return f"coverage:{line_no}"
     return f"cell:{vendor_id}:{line_no}:{kind}"
+
+
+def _eligible_ids_for_state(state: dict) -> set[str]:
+    cmp = awardability.enrich_state_comparison(state)
+    gates = cmp.get("gates") or {}
+    return {
+        v["vendor_id"]
+        for v in (gates.get("vendors") or [])
+        if v.get("eligible_for_quality_gated_award") or v.get("grade") == "Pass"
+    }
+
+
+def _annotate_exception_class(item: dict, eligible_ids: set[str], selected_pairs: set[tuple]) -> dict:
+    vid = item.get("vendor_id")
+    line_no = item.get("line_no")
+    is_selected = (vid, line_no) in selected_pairs if vid and line_no is not None else False
+    gate = None
+    cls = scenario.classify_exception(
+        kind=item.get("kind") or "needs_review",
+        vendor_id=vid,
+        vendor_gate=gate,
+        eligible_vendor_ids=eligible_ids,
+        is_selected=is_selected,
+        line_no=line_no,
+    )
+    item["class"] = cls
+    item["affects_current_recommendation"] = cls in (
+        scenario.EXC_SELECTED_BLOCKER,
+        scenario.EXC_COVERAGE_GAP,
+        scenario.EXC_BUYER_ACK,
+    )
+    item["blocks_freeze"] = cls in (scenario.EXC_SELECTED_BLOCKER, scenario.EXC_COVERAGE_GAP)
+    return item
+
 
 
 def derive_open_exceptions(state: dict) -> list[dict]:
@@ -121,7 +155,19 @@ def derive_open_exceptions(state: dict) -> list[dict]:
                     "label": f"Gate Partial · {qid}",
                 }
             )
-    return derived
+    eligible_ids = _eligible_ids_for_state(state)
+    # Selected pairs from live quality-gated split
+    selected_pairs: set[tuple] = set()
+    try:
+        from . import snapshots
+        live = snapshots.live_award_calculation(state)
+        for r in (live.get("split") or {}).get("rows") or []:
+            if r.get("winner_id") and r.get("line_no") is not None:
+                selected_pairs.add((r["winner_id"], r["line_no"]))
+    except Exception:
+        pass
+    return [_annotate_exception_class(d, eligible_ids, selected_pairs) for d in derived]
+
 
 
 def _persisted_by_key(state: dict) -> dict[str, dict]:
@@ -171,6 +217,8 @@ def list_exceptions(state: dict, filter_status: str | None = None) -> list[dict]
 
     if filter_status in ("open", "pending", "resolved"):
         items = [i for i in items if _bucket(i.get("status") or "open") == filter_status]
+    if filter_status == "affects_current_recommendation":
+        items = [i for i in items if i.get("affects_current_recommendation")]
 
     order = {"open": 0, "rejected": 0, "pending_approval": 1, "overridden": 2, "approved": 2}
     items.sort(
@@ -193,8 +241,20 @@ def counts(state: dict) -> dict:
 
 
 def has_blocking_exceptions(state: dict) -> bool:
-    c = counts(state)
-    return c["open"] > 0 or c["pending"] > 0
+    """True only when open items affect the *selected* award (Phase B.1).
+
+    Excluded/non-selected vendor issues must NOT block freeze of a valid
+    selected allocation.
+    """
+    for i in list_exceptions(state):
+        if (i.get("status") or "open") not in ("open", "rejected", "pending_approval"):
+            continue
+        if i.get("blocks_freeze") or i.get("class") in (
+            "selected_award_blocker",
+            "coverage_gap",
+        ):
+            return True
+    return False
 
 
 def cleared_knockouts(state: dict) -> set[tuple[str, str]]:
@@ -325,6 +385,18 @@ def override_exception(state: dict, key: str, note: str) -> dict:
     }
     if record.get("vendor_id") and record.get("line_no") is not None:
         _apply_cell_review(state, record, note)
+        scenario.append_buyer_review_log(
+            state,
+            {
+                "source": "exceptions",
+                "vendor_id": record.get("vendor_id"),
+                "vendor_name": record.get("vendor_name"),
+                "line_no": record.get("line_no"),
+                "action": "override",
+                "note": note,
+                "exception_key": record.get("key"),
+            },
+        )
     _upsert(state, record)
     vids = [record["vendor_id"]] if record.get("vendor_id") else []
     snapshots.bump_vendor_data_version(state, "review_overridden", affected_vendor_ids=vids)
@@ -359,6 +431,18 @@ def request_approval(
         "approval_note": "",
     }
     _upsert(state, record)
+    scenario.append_buyer_review_log(
+        state,
+        {
+            "source": "approval",
+            "vendor_id": record.get("vendor_id"),
+            "vendor_name": record.get("vendor_name"),
+            "line_no": record.get("line_no"),
+            "action": "request_approval",
+            "note": note,
+            "exception_key": record.get("key"),
+        },
+    )
 
     to = record["manager_email"] or "manager@example.com"
     mgr = record["manager_name"] or "Manager"
@@ -405,6 +489,18 @@ def approve_exception(state: dict, key: str, note: str = "") -> dict:
     if record.get("vendor_id") and record.get("line_no") is not None:
         _apply_cell_review(state, record, note)
     _upsert(state, record)
+    scenario.append_buyer_review_log(
+        state,
+        {
+            "source": "approval",
+            "vendor_id": record.get("vendor_id"),
+            "vendor_name": record.get("vendor_name"),
+            "line_no": record.get("line_no"),
+            "action": "approved",
+            "note": note,
+            "exception_key": record.get("key"),
+        },
+    )
     vids = [record["vendor_id"]] if record.get("vendor_id") else []
     snapshots.bump_vendor_data_version(state, "review_overridden", affected_vendor_ids=vids)
     return record
@@ -419,3 +515,14 @@ def reject_exception(state: dict, key: str, note: str = "") -> dict:
     record = {**persisted, "status": "rejected", "approval_note": note, "resolved_at": _now()}
     _upsert(state, record)
     return record
+
+
+def counts_by_class(state: dict) -> dict:
+    items = list_exceptions(state)
+    out = {"total": len(items), "affects_current_recommendation": 0}
+    for i in items:
+        cls = i.get("class") or "informational"
+        out[cls] = out.get(cls, 0) + 1
+        if i.get("affects_current_recommendation") and (i.get("status") or "open") in ("open", "rejected", "pending_approval"):
+            out["affects_current_recommendation"] += 1
+    return out

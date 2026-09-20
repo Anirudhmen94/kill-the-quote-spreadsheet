@@ -429,9 +429,11 @@ def unresolved_summary(state: dict) -> dict:
             "headline": "0 cells excluded from totals (none) · 0 lines with no awardable quote",
         }
     # Local import avoids cycle at module load
-    from . import awardability
+    from . import awardability, scenario
 
     cmp = engine.build_comparison(state)
+    # Keep SSOT with enrich_state_comparison: blended rates excluded before counts
+    scenario.apply_blended_rate_exclusions(cmp)
     awardability.annotate_comparison(cmp)
     ex = cmp["exclusion_summary"]
     status_needs = status_unresolved = status_missing = 0

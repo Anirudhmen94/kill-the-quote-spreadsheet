@@ -223,7 +223,11 @@ def annotate_comparison(cmp: dict) -> dict:
 
 def enrich_state_comparison(state: dict) -> dict:
     """Build comparison + gates + awardability in one place (SSOT for UI)."""
+    from . import scenario
+
     cmp = engine.build_comparison(state)
+    # Phase D: exclude blended-rate cells before awardability / totals
+    blended = scenario.apply_blended_rate_exclusions(cmp)
     gates = evaluate_gates(state)
     # Attach gate grade onto vendor rows
     by_id = {g["vendor_id"]: g for g in gates["vendors"]}
@@ -234,6 +238,21 @@ def enrich_state_comparison(state: dict) -> dict:
         v["gate_eligible"] = g.get("eligible_for_quality_gated_award", False)
     annotate_comparison(cmp)
     cmp["gates"] = gates
+    # Phase A.3 — market quote coverage vs scenario award coverage
+    mkt = scenario.market_quote_coverage(cmp)
+    cmp["market_quote_coverage"] = mkt.as_dict()
+    cmp["blended_rate_flags"] = blended
+    if blended:
+        # Recompute exclusion headline after blended exclusions
+        annotate_comparison(cmp)
+        cmp["gates"] = gates
+        callouts = cmp.setdefault("edge_callouts", [])
+        # lightweight banner payload; templates / edge_callouts may render
+        cmp["blended_rate_banner"] = (
+            f"{sum(f['line_count'] for f in blended)} cell(s) across "
+            f"{len({f['vendor'] for f in blended})} vendor(s) excluded as blended rates "
+            f"on dissimilar specs."
+        )
     return cmp
 
 

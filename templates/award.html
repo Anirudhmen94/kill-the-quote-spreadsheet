@@ -105,8 +105,8 @@
               <td class="px-2 py-1">{{ r.winner or 'no usable quote' }}</td>
               <td class="px-2 py-1 text-right tabular-nums">{% if r.unit_inr is not none %}{{ '%.2f'|format(r.unit_inr) }}{% endif %}</td>
               <td class="px-2 py-1 text-right tabular-nums">{{ r.extended_inr|inr if r.extended_inr is not none else '' }}</td>
-              <td class="px-2 py-1 text-slate-600">{{ r.runner_up or '' }}</td>
-              <td class="px-2 py-1 text-right tabular-nums text-slate-600">{% if r.gap_pct is not none %}+{{ r.gap_pct }}%{% endif %}</td>
+              <td class="px-2 py-1 text-slate-600">{{ r.runner_up or "—" }}</td>
+              <td class="px-2 py-1 text-right tabular-nums text-slate-600">{% if r.gap_display is defined %}{{ r.gap_display }}{% elif r.gap_pct is not none %}{{ r.gap_pct }}%{% else %}—{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -196,11 +196,48 @@
         </div>
         {% endif %}
         <p class="text-slate-600">Freezes the quality-gated split. Assumed cells stay out unless you confirm.</p>
-        <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2"
-              onsubmit="return confirm('Freeze this award pack to the current snapshot? Later vendor edits will mark it historical.')">
-          <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this."><input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)</label>
-          <button class="rounded bg-slate-900 text-white px-3 py-1.5" title="Freeze the quality-gated split to this snapshot.">Freeze award pack</button>
-        </form>
+        
+        {% if recommendation_lifecycle and recommendation_lifecycle.banner %}
+        <div class="rounded border border-amber-300 bg-amber-50 text-amber-950 px-2 py-1.5 mb-2">{{ recommendation_lifecycle.banner }}</div>
+        {% endif %}
+        {% if market_quote_coverage %}
+        <div class="text-[11px] text-slate-600 mb-1">Market quote coverage: <strong>{{ market_quote_coverage.label }}</strong></div>
+        {% endif %}
+        {% if blended_rate_banner %}
+        <div class="rounded border border-violet-300 bg-violet-50 text-violet-950 px-2 py-1.5 mb-2 text-[11px]">{{ blended_rate_banner }}</div>
+        {% endif %}
+        <div id="freeze-review" class="rounded border border-slate-200 bg-slate-50 p-2 space-y-2">
+          <div class="font-medium text-slate-800">Freeze review</div>
+          {% if freeze_check_complete and not freeze_check_complete.ok %}
+          <div class="text-[11px] text-rose-800">
+            Complete freeze blocked:
+            <ul class="list-disc pl-4">{% for e in freeze_check_complete.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
+          <form method="post" action="/rfx/{{ state.id }}/award/freeze" class="space-y-2">
+            <input type="hidden" name="freeze_mode" id="freeze-mode" value="complete">
+            <label class="flex items-center gap-2" title="Assumed cells stay out of a freeze unless you tick this.">
+              <input type="checkbox" name="confirm_assumed" value="true"> Confirm assumed cells into freeze (off by default)
+            </label>
+            <div class="border-t border-slate-200 pt-2 space-y-1">
+              <div class="text-[11px] font-medium text-slate-700">Partial freeze acknowledgements</div>
+              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="coverage_gaps"> Acknowledge coverage gaps</label>
+              <label class="flex items-center gap-2 text-[11px]"><input type="checkbox" name="acknowledgement" value="selected_blockers"> Acknowledge selected-award blockers</label>
+              <label class="block text-[11px]">Partial reason
+                <textarea name="partial_reason" rows="2" class="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-xs" placeholder="Required for partial freeze"></textarea>
+              </label>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="submit" class="rounded-lg bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-800"
+                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled title="{{ recommendation_lifecycle.freeze_blocked_reason }}"{% endif %}
+                onclick="document.getElementById('freeze-mode').value='complete'">Freeze complete</button>
+              <button type="submit" class="rounded-lg border border-amber-600 text-amber-950 bg-amber-50 px-3 py-1.5 text-xs font-medium hover:bg-amber-100"
+                {% if recommendation_lifecycle and not recommendation_lifecycle.can_freeze %}disabled{% endif %}
+                onclick="document.getElementById('freeze-mode').value='partial'">Freeze partial…</button>
+            </div>
+          </form>
+        </div>
+
       </div>
     </div>
 
@@ -237,10 +274,11 @@
       </ul>
     </div>
     <div class="rounded-lg border border-slate-200 bg-white">
-      <div class="px-4 py-3 border-b border-slate-200 font-medium">Buyer review log ({{ state.reviews|length }})</div>
-      {% if state.reviews %}
+      <div class="px-4 py-3 border-b border-slate-200 font-medium">Buyer review log ({{ (buyer_review_log or state.reviews)|length }})</div>
+      {% set _log = buyer_review_log if buyer_review_log is defined and buyer_review_log else state.reviews %}
+      {% if _log %}
       <ul class="px-4 py-3 text-xs space-y-2">
-        {% for r in state.reviews %}<li><span class="text-slate-500">{{ r.at[:16].replace('T',' ') }}</span> · {{ r.vendor_name }} L{{ r.line_no }} · <strong>{{ r.action }}</strong>{% if r.value_inr is not none %} → ₹{{ r.value_inr }}{% endif %}<div class="text-slate-600">{{ r.note }}</div></li>{% endfor %}
+        {% for r in _log %}<li><span class="text-slate-500">{{ r.at[:16].replace('T',' ') }}</span> · {{ r.vendor_name }} L{{ r.line_no }} · <strong>{{ r.action }}</strong>{% if r.value_inr is not none %} → ₹{{ r.value_inr }}{% endif %}<div class="text-slate-600">{{ r.note }}</div></li>{% endfor %}
       </ul>
       {% else %}<div class="px-4 py-3 text-xs text-slate-500">No cells accepted or overridden. Flagged cells stay excluded from totals.</div>{% endif %}
     </div>

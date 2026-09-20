@@ -38,6 +38,7 @@ async def unhandled_error(request: Request, exc: Exception):
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     events = []
+    # Phase D demo hygiene: prefer a single clean fully-processed demo event on the home list.
     for rid in storage.list_rfx_ids()[:12]:
         st = storage.load_state(rid)
         if st:
@@ -51,6 +52,12 @@ def home(request: Request):
                     "extracted": sum(1 for v in st.get("vendors", []) if v.get("status") == "extracted"),
                 }
             )
+    # Keep at most one golden/demo seed on the home list (newest), plus non-demo events.
+    demo_events = [e for e in events if e.get("is_golden_seed") or e.get("demo_mode")]
+    other = [e for e in events if not (e.get("is_golden_seed") or e.get("demo_mode"))]
+    if demo_events:
+        demo_events = sorted(demo_events, key=lambda e: e.get("created_at") or "", reverse=True)[:1]
+    events = demo_events + other
     return render(request, "index.html", events=events, example_brief=vendor_sim.EXAMPLE_BRIEF, default_gates=draft_gates.default_gates())
 
 

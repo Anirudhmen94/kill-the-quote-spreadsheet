@@ -187,28 +187,159 @@ def _notices_and_regrets(proposal: dict) -> tuple[list[dict], list[dict]]:
     return notices, regrets
 
 
-def freeze_award(state: dict, *, confirm_assumed: bool = False, require_quality_gate: bool = True) -> dict:
-    """Create an immutable freeze pack bound to the proposal snapshot."""
-    if state.get("demo_mode") and state.get("freeze_locked_by_demo"):
-        raise ValueError("Demo mode prevents overwriting a locked freeze without Interview reset.")
+
+
+def _current_saved_recommendation(state: dict) -> dict | None:
+    from . import scenario, snapshots
+
+    snapshots.ensure_snapshot_fields(state)
+    life = scenario.recommendation_lifecycle(state)
+    if life["lifecycle"] != scenario.REC_SAVED:
+        return None
+    return life.get("current")
+
+
+def validate_freeze_request(
+    state: dict,
+    *,
+    mode: str = "complete",
+    confirm_assumed: bool = False,
+    acknowledgements: list[str] | None = None,
+    partial_reason: str = "",
+    require_quality_gate: bool = True,
+) -> dict:
+    """Server-side re-validation for complete vs partial freeze (Phase A.5)."""
+    from . import scenario
+
+    acknowledgements = list(acknowledgements or [])
+    life = scenario.recommendation_lifecycle(state)
+    errors: list[str] = []
+    if not life["can_freeze"]:
+        errors.append(life.get("freeze_blocked_reason") or "Save a current recommendation before freeze.")
 
     proposal = build_award_proposal(
         state,
         require_quality_gate=require_quality_gate,
         confirm_assumed=confirm_assumed,
     )
-    # Refuse freeze if assumed cells would be included without confirm
+    result = scenario.compute_award_scenario(
+        proposal["cmp"],
+        strategy="quality_gated_cheapest" if require_quality_gate else "split_cheapest",
+        vendor_ids=proposal.get("eligible_vendor_ids")
+        or (proposal["split"].get("eligible_vendor_ids")),
+        require_cleared_questionnaire=False,
+        allow_needs_review=False,
+        vendor_data_version=proposal["vendor_data_version"],
+        calculation_snapshot_id=proposal["snapshot"]["id"],
+        require_quality_gate=require_quality_gate,
+        discounts_confirmed=bool((state.get("discount_confirmations") or {})),
+    )
+
+    selected_blockers = result.selected_award_blockers
+    coverage_gaps = result.coverage_gaps
+    acks_needed = result.buyer_acknowledgements_required
+
+    if mode == "complete":
+        if coverage_gaps or result.uncovered_lines:
+            errors.append(
+                "Complete freeze requires full allocation — uncovered lines: "
+                + ", ".join(str(x) for x in (result.uncovered_lines or []))
+            )
+        if selected_blockers:
+            errors.append(
+                f"Complete freeze blocked by {len(selected_blockers)} selected-award blocker(s)."
+            )
+        # Assumed cells in split without confirm
+        assumed = [
+            r
+            for r in proposal["split"]["rows"]
+            if r.get("blocked_reason") and "Assumed" in (r.get("blocked_reason") or "")
+        ]
+        if assumed and not confirm_assumed:
+            errors.append("Assumed cells present — confirm them or use partial freeze.")
+    elif mode == "partial":
+        if not (partial_reason or "").strip():
+            errors.append("Partial freeze requires a written reason.")
+        missing_acks = []
+        for a in acks_needed:
+            key = a.get("kind") or a.get("label")
+            if key and key not in acknowledgements and a.get("blocks_complete_freeze"):
+                missing_acks.append(a.get("label") or key)
+        # Also require explicit ack of coverage gaps / selected blockers when present
+        if coverage_gaps and "coverage_gaps" not in acknowledgements:
+            missing_acks.append("coverage_gaps")
+        if selected_blockers and "selected_blockers" not in acknowledgements:
+            missing_acks.append("selected_blockers")
+        if missing_acks:
+            errors.append(
+                "Partial freeze requires acknowledgements: " + ", ".join(missing_acks)
+            )
+    else:
+        errors.append(f"Unknown freeze mode {mode!r}")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "mode": mode,
+        "proposal": proposal,
+        "scenario": result.as_dict(),
+        "lifecycle": life,
+        "acknowledgements": acknowledgements,
+        "partial_reason": partial_reason,
+    }
+
+
+def freeze_award(
+    state: dict,
+    *,
+    confirm_assumed: bool = False,
+    require_quality_gate: bool = True,
+    mode: str = "complete",
+    acknowledgements: list[str] | None = None,
+    partial_reason: str = "",
+) -> dict:
+    """Create an immutable freeze pack (complete or partial) bound to a snapshot.
+
+    Complete: full allocation, no selected-award blockers, saved recommendation required.
+    Partial: acknowledgements + reason required; still immutable once written.
+    """
+    from . import scenario
+
+    if state.get("demo_mode") and state.get("freeze_locked_by_demo"):
+        raise ValueError("Demo mode prevents overwriting a locked freeze without Interview reset.")
+
+    check = validate_freeze_request(
+        state,
+        mode=mode,
+        confirm_assumed=confirm_assumed,
+        acknowledgements=acknowledgements,
+        partial_reason=partial_reason,
+        require_quality_gate=require_quality_gate,
+    )
+    if not check["ok"]:
+        raise ValueError("; ".join(check["errors"]))
+
+    proposal = check["proposal"]
+    scen = check["scenario"]
     assumed_in_split = [
         r
         for r in proposal["split"]["rows"]
         if r.get("blocked_reason") and "Assumed" in (r.get("blocked_reason") or "")
     ]
     notices, regrets = _notices_and_regrets(proposal)
+    rec = _current_saved_recommendation(state)
+
+    total_paise = scen.get("total_extended_paise")
+    if total_paise is None:
+        from .scenario import inr_to_paise
+        total_paise = inr_to_paise(proposal["total_extended_inr"])
 
     pack = {
         "id": _short(),
         "frozen_at": _now(),
         "status": "frozen",
+        "freeze_mode": mode,
+        "immutable": True,
         "strategy": proposal["strategy"],
         "strategy_key": proposal["strategy_key"],
         "require_quality_gate": require_quality_gate,
@@ -217,9 +348,15 @@ def freeze_award(state: dict, *, confirm_assumed: bool = False, require_quality_
         "vendor_data_version": proposal["vendor_data_version"],
         "input_hash": proposal["snapshot"].get("input_hash"),
         "total_extended_inr": proposal["total_extended_inr"],
+        "total_extended_paise": total_paise,
         "covered_line_count": proposal["covered_line_count"],
         "uncovered_lines": proposal["uncovered_lines"],
         "share_by_vendor": proposal["share_by_vendor"],
+        "market_quote_coverage": scen.get("market_quote_coverage"),
+        "scenario_award_coverage": scen.get("scenario_award_coverage"),
+        "recommendation_id": (rec or {}).get("id"),
+        "acknowledgements": list(acknowledgements or []),
+        "partial_reason": (partial_reason or "").strip() if mode == "partial" else "",
         "line_awards": [
             {
                 "line_no": r["line_no"],
@@ -227,8 +364,11 @@ def freeze_award(state: dict, *, confirm_assumed: bool = False, require_quality_
                 "winner": r.get("winner"),
                 "winner_id": r.get("winner_id"),
                 "unit_inr": r.get("unit_inr"),
+                "unit_paise": r.get("unit_paise"),
                 "extended_inr": r.get("extended_inr"),
-                "runner_up": r.get("runner_up"),
+                "extended_paise": r.get("extended_paise"),
+                "runner_up": r.get("runner_up") or None,
+                "gap_pct": r.get("gap_pct"),
                 "blocked_reason": r.get("blocked_reason"),
             }
             for r in proposal["split"]["rows"]
@@ -238,7 +378,9 @@ def freeze_award(state: dict, *, confirm_assumed: bool = False, require_quality_
         "gates_summary": proposal["gates"]["summary"],
         "exclusion_summary": proposal.get("exclusion_summary"),
         "blockers_total": proposal["blockers"]["total"],
+        "selected_award_blockers": scen.get("selected_award_blockers") or [],
         "assumed_blocked_lines": [r["line_no"] for r in assumed_in_split],
+        "readiness": scen.get("readiness"),
     }
 
     # Supersede prior freezes
@@ -251,6 +393,13 @@ def freeze_award(state: dict, *, confirm_assumed: bool = False, require_quality_
     state.setdefault("freeze_packs", []).append(pack)
     state["freeze"] = pack  # pointer to current
     state["status"] = "award_frozen"
+
+    # Mark recommendation lifecycle
+    if rec:
+        rec["status"] = (
+            scenario.REC_FROZEN_COMPLETE if mode == "complete" else scenario.REC_FROZEN_PARTIAL
+        )
+        rec["freeze_id"] = pack["id"]
     return pack
 
 
@@ -345,3 +494,7 @@ def export_freeze_zip(state: dict, pack: dict | None = None) -> bytes:
             ),
         )
     return buf.getvalue()
+
+
+# Aliases used by routes
+validate_freeze_request = validate_freeze_request

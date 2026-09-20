@@ -225,7 +225,14 @@ def test_exceptions_override_approval_reject_flow():
 def test_award_send_notices_export_and_stakeholder_alerts():
     st = _seed()
     if not freeze.current_freeze(st):
-        freeze.freeze_award(st, confirm_assumed=False, require_quality_gate=True)
+        freeze.freeze_award(
+            st,
+            confirm_assumed=True,
+            require_quality_gate=True,
+            mode="partial",
+            acknowledgements=["coverage_gaps", "selected_blockers"],
+            partial_reason="Test partial freeze — demo coverage gap on line 30.",
+        )
     storage.save_state(st["id"], st)
     before = len(storage.load_state(st["id"]).get("outbox") or [])
 
